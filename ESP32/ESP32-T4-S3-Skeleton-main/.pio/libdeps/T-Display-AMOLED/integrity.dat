@@ -1,0 +1,13 @@
+SPIFFS
+bxparks/AceButton @ 1.10.1
+bodmer/TFT_eSPI @ 2.5.0
+SD
+sparkfun/SparkFun MAX3010x Pulse and Proximity Sensor Library @ ^1.1.2
+bblanchon/ArduinoJson @ 7.2.1
+mikalhart/TinyGPSPlus @ 1.0.3
+adafruit/Adafruit NeoPixel @ 1.11.0
+paulstoffregen/OneWire @ ^2.3.8
+lvgl/lvgl @ 8.4.0
+FS
+lewisxhe/XPowersLib @ 0.2.7
+lewisxhe/SensorLib @ 0.2.4
