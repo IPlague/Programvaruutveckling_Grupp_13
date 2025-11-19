@@ -25,6 +25,12 @@ static lv_obj_t* history_slider;
 static lv_obj_t* history_chart;
 static lv_chart_series_t* temp_series;
 
+//Global variables for settings Screen
+static lv_obj_t* settings_tile;
+static char selectedCity[40] = "Karlskrona";
+static bool showTemperature = true;
+static bool showCondition = true;
+
 // Variabler för väderdata
 struct WeatherDay {
     char date[20];
@@ -312,6 +318,56 @@ static void history_slider_event_cb(lv_event_t* e) {
     Serial.printf("Slider value: %d\n", value);
 }
 
+//Settings Screen
+static void create_settings_screen(lv_obj_t* parent) 
+{
+    lv_obj_set_style_bg_color(parent, lv_color_hex(0xEEEEEE), 0);
+
+    // Title
+    lv_obj_t* title = lv_label_create(parent);
+    lv_label_set_text(title, "Settings");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_26, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+
+    // City dropdown
+    lv_obj_t* city_label = lv_label_create(parent);
+    lv_label_set_text(city_label, "Select City:");
+    lv_obj_align(city_label, LV_ALIGN_TOP_LEFT, 20, 60);
+
+    lv_obj_t* city_dropdown = lv_dropdown_create(parent);
+    lv_dropdown_set_options(city_dropdown,
+        "A\n"
+        "B\n"
+        "C\n"
+        "D"
+    );
+    lv_obj_set_width(city_dropdown, 200);
+    lv_obj_align(city_dropdown, LV_ALIGN_TOP_LEFT, 20, 90);
+
+    // Temperature toggle
+    lv_obj_t* temp_label = lv_label_create(parent);
+    lv_label_set_text(temp_label, "Show Temperature");
+    lv_obj_align(temp_label, LV_ALIGN_LEFT_MID, 20, -30);
+
+    lv_obj_t* temp_switch = lv_switch_create(parent);
+    lv_obj_add_state(temp_switch, LV_STATE_CHECKED); 
+    lv_obj_align(temp_switch, LV_ALIGN_LEFT_MID, 220, -30);
+
+    // Condition toggle
+    lv_obj_t* cond_label = lv_label_create(parent);
+    lv_label_set_text(cond_label, "Show Condition");
+    lv_obj_align(cond_label, LV_ALIGN_LEFT_MID, 20, 20);
+
+    lv_obj_t* cond_switch = lv_switch_create(parent);
+    lv_obj_add_state(cond_switch, LV_STATE_CHECKED);
+    lv_obj_align(cond_switch, LV_ALIGN_LEFT_MID, 220, 20);
+
+    // Navigation info
+    lv_obj_t* nav_label = lv_label_create(parent);
+    lv_label_set_text(nav_label, "Swipe left for history");
+    lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -20);
+}
+
 // Function: Skapar hela UI:t
 static void create_ui() {
     // Fullscreen Tileview med horisontell scroll
@@ -323,12 +379,14 @@ static void create_ui() {
     // Skapa tre tiles för de olika skärmarna
     start_tile = lv_tileview_add_tile(tileview, 0, 0, LV_DIR_RIGHT);
     forecast_tile = lv_tileview_add_tile(tileview, 1, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
-    history_tile = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_LEFT);
+    history_tile = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
+    settings_tile = lv_tileview_add_tile(tileview, 3, 0, LV_DIR_LEFT);
 
     // Fyll tiles med innehåll
     create_start_screen(start_tile);
     create_forecast_screen(forecast_tile);
     create_history_screen(history_tile);
+    create_settings_screen(settings_tile);
     
     // Lägg till event för slider
     lv_obj_add_event_cb(history_slider, history_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
