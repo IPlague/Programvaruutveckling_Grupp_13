@@ -236,6 +236,22 @@ static void create_forecast_screen(lv_obj_t* parent) {
         lv_obj_set_style_text_font(condition_label, &lv_font_montserrat_12, 0);
         lv_obj_align(condition_label, LV_ALIGN_CENTER, 0, 8);
     }
+
+/*
+Alessandro Needs to figure out how to show icons, the pieces are there...
+but braincells aren't
+It seems that when we create the tiles we need a way to fetch condition data to then display
+the icon, might need some sort of get function to get that info tho
+lv_obj_t * icon = lv_image_create(lv_screen_active(), NULL);
+
+From variable 
+lv_image_set_src(icon, &my_icon_dsc);
+
+ From file 
+lv_image_set_src(icon, "S:my_icon.bin");
+
+
+*/
     
     // Navigation instruktion
     lv_obj_t* nav_label = lv_label_create(parent);
