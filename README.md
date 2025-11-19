@@ -4,3 +4,6 @@ https://docs.google.com/document/d/1glbq1NhrB0KMsgJXjn6R_UYCc8ks2l0L2Da2Vk9Eq4E/
 
 hahahhahahha
 123123123
+
+
+https://lvgl.io/tools/imageconverter To convert the PNGs into c code for LVGL
