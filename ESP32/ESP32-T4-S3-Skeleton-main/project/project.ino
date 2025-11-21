@@ -9,8 +9,8 @@
 #include <lvgl.h>
 
 // Wi-Fi credentials (UPPDATERA MED DINA UPPGIFTER)
-static const char* WIFI_SSID     = "Pixel 7a";
-static const char* WIFI_PASSWORD = "Sandrolo";
+static const char* WIFI_SSID     = "BTH_Guest";
+static const char* WIFI_PASSWORD = "oliv95lila";
 
 LilyGo_Class amoled;
 
@@ -159,21 +159,21 @@ static void create_start_screen(lv_obj_t* parent) {
     // Titel
     lv_obj_t* title_label = lv_label_create(parent);
     lv_label_set_text(title_label, "Weather Station");
-    lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(title_label, lv_color_black(), 0);
     lv_obj_set_style_text_font(title_label, &lv_font_montserrat_28, 0);
     lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 30);
     
     // Gruppnamn
     lv_obj_t* group_label = lv_label_create(parent);
     lv_label_set_text(group_label, "Group 13");
-    lv_obj_set_style_text_color(group_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(group_label, lv_color_black(), 0);
     lv_obj_set_style_text_font(group_label, &lv_font_montserrat_24, 0);
     lv_obj_align(group_label, LV_ALIGN_TOP_MID, 0, 80);
     
     // Programversion
     lv_obj_t* version_label = lv_label_create(parent);
     lv_label_set_text(version_label, "Version 1.0");
-    lv_obj_set_style_text_color(version_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(version_label, lv_color_black(), 0);
     lv_obj_set_style_text_font(version_label, &lv_font_montserrat_20, 0);
     lv_obj_align(version_label, LV_ALIGN_TOP_MID, 0, 120);
     
@@ -264,7 +264,7 @@ static void create_history_screen(lv_obj_t* parent) {
     
     // Temperatur chart
     history_chart = lv_chart_create(parent);
-    lv_obj_set_size(history_chart, 400, 200);
+    lv_obj_set_size(history_chart, 400,     200);
     lv_obj_align(history_chart, LV_ALIGN_TOP_MID, 0, 50);
     lv_chart_set_type(history_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_range(history_chart, LV_CHART_AXIS_PRIMARY_Y, -10, 30);
