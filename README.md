@@ -7,3 +7,7 @@ hahahhahahha
 
 
 https://lvgl.io/tools/imageconverter To convert the PNGs into c code for LVGL
+
+
+
+To think about: button on historical screen to instantly change parameter/city. Fix scrolling for historical weather
