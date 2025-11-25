@@ -7,6 +7,7 @@
 #include <LilyGo_AMOLED.h>
 #include <LV_Helper.h>
 #include <lvgl.h>
+#include <map>
 
 // Wi-Fi credentials (UPPDATERA MED DINA UPPGIFTER)
 static const char* WIFI_SSID     = "Pixel 7a";
@@ -30,6 +31,17 @@ struct WeatherDay {
     char date[20];
     float temperature;
     const char* condition;
+};
+
+//Adderade en map där du har stadens namn som "key" och en array som "value"
+//Arrayen innehåller stadens "id", Latitud och Longitud i den specifik ordningen
+std::map<std::string,std::array<int,3>> WeatherStation
+{
+  {"Stockholm", {97400,59.6269,17.9545}},
+  {"Karlskrona", {65090,56.1500,15.5890}},
+  {"Göteborg", {72420,57.6996,11.9673}},
+  {"Malmö",{53300,55.6100,13.0715}},
+  {"Kiruna",{180940,67.8500,20.2333}}
 };
 
 WeatherDay forecastData[7];
