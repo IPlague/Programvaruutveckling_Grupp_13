@@ -10,8 +10,8 @@
 #include <map>
 
 // Wi-Fi credentials (UPPDATERA MED DINA UPPGIFTER)
-static const char* WIFI_SSID     = "Pixel 7a";
-static const char* WIFI_PASSWORD = "Sandrolo";
+static const char* WIFI_SSID     = "BTH_Guest";
+static const char* WIFI_PASSWORD = "oliv95lila";
 
 LilyGo_Class amoled;
 
@@ -25,6 +25,12 @@ static lv_obj_t* history_tile;
 static lv_obj_t* history_slider;
 static lv_obj_t* history_chart;
 static lv_chart_series_t* temp_series;
+
+//Global variables for settings Screen
+static lv_obj_t* settings_tile;
+static char selectedCity[40] = "Karlskrona";
+static bool showTemperature = true;
+static bool showCondition = true;
 
 // Variabler för väderdata
 struct WeatherDay {
@@ -165,21 +171,21 @@ static void create_start_screen(lv_obj_t* parent) {
     // Titel
     lv_obj_t* title_label = lv_label_create(parent);
     lv_label_set_text(title_label, "Weather Station");
-    lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(title_label, lv_color_black(), 0);
     lv_obj_set_style_text_font(title_label, &lv_font_montserrat_28, 0);
     lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 30);
     
     // Gruppnamn
     lv_obj_t* group_label = lv_label_create(parent);
     lv_label_set_text(group_label, "Group 13");
-    lv_obj_set_style_text_color(group_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(group_label, lv_color_black(), 0);
     lv_obj_set_style_text_font(group_label, &lv_font_montserrat_24, 0);
     lv_obj_align(group_label, LV_ALIGN_TOP_MID, 0, 80);
     
     // Programversion
     lv_obj_t* version_label = lv_label_create(parent);
     lv_label_set_text(version_label, "Version 1.0");
-    lv_obj_set_style_text_color(version_label, lv_color_white(), 0);
+    lv_obj_set_style_text_color(version_label, lv_color_black(), 0);
     lv_obj_set_style_text_font(version_label, &lv_font_montserrat_20, 0);
     lv_obj_align(version_label, LV_ALIGN_TOP_MID, 0, 120);
     
@@ -286,7 +292,7 @@ static void create_history_screen(lv_obj_t* parent) {
     
     // Temperatur chart
     history_chart = lv_chart_create(parent);
-    lv_obj_set_size(history_chart, 400, 200);
+    lv_obj_set_size(history_chart, 400,     200);
     lv_obj_align(history_chart, LV_ALIGN_TOP_MID, 0, 50);
     lv_chart_set_type(history_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_range(history_chart, LV_CHART_AXIS_PRIMARY_Y, -10, 30);
@@ -340,6 +346,56 @@ static void history_slider_event_cb(lv_event_t* e) {
     Serial.printf("Slider value: %d\n", value);
 }
 
+//Settings Screen
+static void create_settings_screen(lv_obj_t* parent) 
+{
+    lv_obj_set_style_bg_color(parent, lv_color_hex(0xEEEEEE), 0);
+
+    // Title
+    lv_obj_t* title = lv_label_create(parent);
+    lv_label_set_text(title, "Settings");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_26, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
+
+    // City dropdown
+    lv_obj_t* city_label = lv_label_create(parent);
+    lv_label_set_text(city_label, "Select City:");
+    lv_obj_align(city_label, LV_ALIGN_TOP_LEFT, 20, 60);
+
+    lv_obj_t* city_dropdown = lv_dropdown_create(parent);
+    lv_dropdown_set_options(city_dropdown,
+        "A\n"
+        "B\n"
+        "C\n"
+        "D"
+    );
+    lv_obj_set_width(city_dropdown, 200);
+    lv_obj_align(city_dropdown, LV_ALIGN_TOP_LEFT, 20, 90);
+
+    // Temperature toggle
+    lv_obj_t* temp_label = lv_label_create(parent);
+    lv_label_set_text(temp_label, "Show Temperature");
+    lv_obj_align(temp_label, LV_ALIGN_LEFT_MID, 20, -30);
+
+    lv_obj_t* temp_switch = lv_switch_create(parent);
+    lv_obj_add_state(temp_switch, LV_STATE_CHECKED); 
+    lv_obj_align(temp_switch, LV_ALIGN_LEFT_MID, 220, -30);
+
+    // Condition toggle
+    lv_obj_t* cond_label = lv_label_create(parent);
+    lv_label_set_text(cond_label, "Show Condition");
+    lv_obj_align(cond_label, LV_ALIGN_LEFT_MID, 20, 20);
+
+    lv_obj_t* cond_switch = lv_switch_create(parent);
+    lv_obj_add_state(cond_switch, LV_STATE_CHECKED);
+    lv_obj_align(cond_switch, LV_ALIGN_LEFT_MID, 220, 20);
+
+    // Navigation info
+    lv_obj_t* nav_label = lv_label_create(parent);
+    lv_label_set_text(nav_label, "Swipe left for history");
+    lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -20);
+}
+
 // Function: Skapar hela UI:t
 static void create_ui() {
     // Fullscreen Tileview med horisontell scroll
@@ -351,12 +407,14 @@ static void create_ui() {
     // Skapa tre tiles för de olika skärmarna
     start_tile = lv_tileview_add_tile(tileview, 0, 0, LV_DIR_RIGHT);
     forecast_tile = lv_tileview_add_tile(tileview, 1, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
-    history_tile = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_LEFT);
+    history_tile = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
+    settings_tile = lv_tileview_add_tile(tileview, 3, 0, LV_DIR_LEFT);
 
     // Fyll tiles med innehåll
     create_start_screen(start_tile);
     create_forecast_screen(forecast_tile);
     create_history_screen(history_tile);
+    create_settings_screen(settings_tile);
     
     // Lägg till event för slider
     lv_obj_add_event_cb(history_slider, history_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
