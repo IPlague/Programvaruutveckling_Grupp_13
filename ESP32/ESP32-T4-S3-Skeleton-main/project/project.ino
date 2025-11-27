@@ -31,6 +31,8 @@ static lv_obj_t* settings_tile;
 static char selectedCity[40] = "Karlskrona";
 static bool showTemperature = true;
 static bool showCondition = true;
+static int selectedCityIndex = 0;  
+static int selectedParameter = 1;
 
 // Variabler för väderdata
 struct WeatherDay {
@@ -346,7 +348,47 @@ static void history_slider_event_cb(lv_event_t* e) {
     Serial.printf("Slider value: %d\n", value);
 }
 
-//Settings Screen
+                    //Settings Screen//
+//city selector event
+static void city_dropdown_event_cb(lv_event_t* e) {
+    lv_obj_t* dd = lv_event_get_target(e);
+    selectedCityIndex = lv_dropdown_get_selected(dd);
+
+    // Map city index to SMHI API coordinates or station IDs
+    switch (selectedCityIndex) {
+        case 0: strcpy(selectedCity, "Karlskrona"); break;
+        case 1: strcpy(selectedCity, "Stockholm"); break;
+        case 2: strcpy(selectedCity, "Goteborg"); break;
+        case 3: strcpy(selectedCity, "Malmo"); break;
+        case 4: strcpy(selectedCity, "Kiruna"); break;
+    }
+
+    Serial.printf("Selected city: %s\n", selectedCity);
+    
+    fetch_weather_data();
+    update_forecast_display();
+}
+
+
+
+//Weather parameter selector event
+static void parameter_dropdown_event_cb(lv_event_t* e) {
+    lv_obj_t* dd = lv_event_get_target(e);
+    int index = lv_dropdown_get_selected(dd);
+
+    // Convert dropdown index → SMHI parameter number
+    switch (index) {
+        case 0: selectedParameter = 1; break; // Temperature
+        case 1: selectedParameter = 6; break; // Humidity
+        case 2: selectedParameter = 4; break; // Wind speed
+        case 3: selectedParameter = 9; break; // Air pressure
+    }
+
+    Serial.printf("Selected parameter: %d\n", selectedParameter);
+
+    update_forecast_display();
+}
+//Creating the settingscreen tile
 static void create_settings_screen(lv_obj_t* parent) 
 {
     lv_obj_set_style_bg_color(parent, lv_color_hex(0xEEEEEE), 0);
@@ -364,35 +406,35 @@ static void create_settings_screen(lv_obj_t* parent)
 
     lv_obj_t* city_dropdown = lv_dropdown_create(parent);
     lv_dropdown_set_options(city_dropdown,
-        "A\n"
-        "B\n"
-        "C\n"
-        "D"
+        "Karlskrona (65090)\n"
+        "Stockholm (97400)\n"
+        "Goteborg (72420)\n"
+        "Malmo (53300)\n"
+        "Kiruna (180940)"
     );
-    lv_obj_set_width(city_dropdown, 200);
+    lv_obj_set_width(city_dropdown, 240);
     lv_obj_align(city_dropdown, LV_ALIGN_TOP_LEFT, 20, 90);
+    lv_obj_add_event_cb(city_dropdown, city_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-    // Temperature toggle
-    lv_obj_t* temp_label = lv_label_create(parent);
-    lv_label_set_text(temp_label, "Show Temperature");
-    lv_obj_align(temp_label, LV_ALIGN_LEFT_MID, 20, -30);
+    // Parameter dropdown
+    lv_obj_t* param_label = lv_label_create(parent);
+    lv_label_set_text(param_label, "Select Weather Parameter:");
+    lv_obj_align(param_label, LV_ALIGN_TOP_LEFT, 20, 150);
 
-    lv_obj_t* temp_switch = lv_switch_create(parent);
-    lv_obj_add_state(temp_switch, LV_STATE_CHECKED); 
-    lv_obj_align(temp_switch, LV_ALIGN_LEFT_MID, 220, -30);
-
-    // Condition toggle
-    lv_obj_t* cond_label = lv_label_create(parent);
-    lv_label_set_text(cond_label, "Show Condition");
-    lv_obj_align(cond_label, LV_ALIGN_LEFT_MID, 20, 20);
-
-    lv_obj_t* cond_switch = lv_switch_create(parent);
-    lv_obj_add_state(cond_switch, LV_STATE_CHECKED);
-    lv_obj_align(cond_switch, LV_ALIGN_LEFT_MID, 220, 20);
+    lv_obj_t* param_dropdown = lv_dropdown_create(parent);
+    lv_dropdown_set_options(param_dropdown,
+        "Temperature (1)\n"
+        "Humidity (6)\n"
+        "Wind Speed (4)\n"
+        "Air Pressure (9)"
+    );
+    lv_obj_set_width(param_dropdown, 240);
+    lv_obj_align(param_dropdown, LV_ALIGN_TOP_LEFT, 20, 180);
+    lv_obj_add_event_cb(param_dropdown, parameter_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
     // Navigation info
     lv_obj_t* nav_label = lv_label_create(parent);
-    lv_label_set_text(nav_label, "Swipe left for history");
+    lv_label_set_text(nav_label, "Swipe left for history screen");
     lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -20);
 }
 
