@@ -43,7 +43,7 @@ struct WeatherDay {
 
 //Adderade en map där du har stadens namn som "key" och en array som "value"
 //Arrayen innehåller stadens "id", Latitud och Longitud i den specifik ordningen
-std::map<std::string,std::array<int,3>> WeatherStation
+std::map<std::string,std::array<double,3>> WeatherStation
 {
   {"Stockholm", {97400,59.6269,17.9545}},
   {"Karlskrona", {65090,56.1500,15.5890}},
@@ -51,6 +51,32 @@ std::map<std::string,std::array<int,3>> WeatherStation
   {"Malmö",{53300,55.6100,13.0715}},
   {"Kiruna",{180940,67.8500,20.2333}}
 };
+
+//TODO: 
+/*
+functions for getting various parameters from API (get temp, get condition)
+function to create API string
+*/
+
+
+String createSMHIAPIForecastLink()
+    {
+    
+    double lat  = WeatherStation["Stockholm"][1];
+    double lon  = WeatherStation["Stockholm"][2];
+    String latitudeCord = std::to_string(lat);
+    String longitudeCord = std::to_string(lon);
+
+
+    String APIVersion = "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/";
+    String latitudeLink = "lat/";
+    String end = "/data.json";
+    
+    return (APIVersion + longitudeCord + latitudeLink + latitudeCord + end);
+    //https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/16/lat/58/data.json
+    // Alt. https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2/geotype/point/lon/15.586/lat/56.1616/data.json 
+    }
+
 
 WeatherDay forecastData[7];
 float historicalTemp[30]; // 30 dagars historik
