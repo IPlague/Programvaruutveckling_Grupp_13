@@ -10,8 +10,8 @@
 #include <map>
 
 // Wi-Fi credentials (UPPDATERA MED DINA UPPGIFTER)
-static const char* WIFI_SSID     = "BTH_Guest";
-static const char* WIFI_PASSWORD = "oliv95lila";
+static const char* WIFI_SSID     = "xyz";
+static const char* WIFI_PASSWORD = "xyz";
 
 LilyGo_Class amoled;
 
@@ -26,13 +26,20 @@ static lv_obj_t* history_slider;
 static lv_obj_t* history_chart;
 static lv_chart_series_t* temp_series;
 
+//Variables for default values for settings
+static const int DEFAULT_CITY_INDEX = 0;
+static const int DEFAULT_PARAMETER_INDEX = 0;
+
+//Mapping for dropdown index and SMHI values because the indexing doesen't match
+//0 = temperature(1), 1 = Humidity (6), 2 = Wind Speed(4) and 3 = Air Pressure(9)
+static const int PARAMETER_CODES[] = {1, 6, 4, 9};
+
 //Global variables for settings Screen
 static lv_obj_t* settings_tile;
 static char selectedCity[40] = "Karlskrona";
-static bool showTemperature = true;
-static bool showCondition = true;
 static int selectedCityIndex = 0;  
 static int selectedParameter = 1;
+
 
 // Variabler för väderdata
 struct WeatherDay {
@@ -375,7 +382,7 @@ static void history_slider_event_cb(lv_event_t* e) {
 }
 
                     //Settings Screen//
-//city selector event
+//City selector event
 static void city_dropdown_event_cb(lv_event_t* e) {
     lv_obj_t* dd = lv_event_get_target(e);
     selectedCityIndex = lv_dropdown_get_selected(dd);
@@ -401,19 +408,35 @@ static void city_dropdown_event_cb(lv_event_t* e) {
 static void parameter_dropdown_event_cb(lv_event_t* e) {
     lv_obj_t* dd = lv_event_get_target(e);
     int index = lv_dropdown_get_selected(dd);
-
-    // Convert dropdown index → SMHI parameter number
-    switch (index) {
-        case 0: selectedParameter = 1; break; // Temperature
-        case 1: selectedParameter = 6; break; // Humidity
-        case 2: selectedParameter = 4; break; // Wind speed
-        case 3: selectedParameter = 9; break; // Air pressure
-    }
-
+    selectedParameter = PARAMETER_CODES[index];
+    
     Serial.printf("Selected parameter: %d\n", selectedParameter);
 
     update_forecast_display();
 }
+
+//Event to make the resetbutton work
+static void reset_defaults_event_cb(lv_event_t* e)
+{
+    lv_obj_t** dropdowns = (lv_obj_t**)lv_event_get_user_data(e);
+    lv_obj_t* city_dd  = dropdowns[0];
+    lv_obj_t* param_dd = dropdowns[1];
+
+    // Reset internal values
+    selectedCityIndex = DEFAULT_CITY_INDEX;
+    selectedParameter = PARAMETER_CODES[DEFAULT_PARAMETER_INDEX];
+
+    // Update dropdowns in settings menu to be the default values when resetbutton has been pressed
+    lv_dropdown_set_selected(city_dd, DEFAULT_CITY_INDEX);
+    lv_dropdown_set_selected(param_dd, DEFAULT_PARAMETER_INDEX);
+
+    // Updates the screens that settings affect
+    fetch_weather_data();
+    update_forecast_display();
+
+    Serial.println("Settings reset to default!");
+}
+
 //Creating the settingscreen tile
 static void create_settings_screen(lv_obj_t* parent) 
 {
@@ -440,7 +463,9 @@ static void create_settings_screen(lv_obj_t* parent)
     );
     lv_obj_set_width(city_dropdown, 240);
     lv_obj_align(city_dropdown, LV_ALIGN_TOP_LEFT, 20, 90);
+    lv_dropdown_set_selected(city_dropdown, DEFAULT_CITY_INDEX);
     lv_obj_add_event_cb(city_dropdown, city_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
 
     // Parameter dropdown
     lv_obj_t* param_label = lv_label_create(parent);
@@ -456,7 +481,24 @@ static void create_settings_screen(lv_obj_t* parent)
     );
     lv_obj_set_width(param_dropdown, 240);
     lv_obj_align(param_dropdown, LV_ALIGN_TOP_LEFT, 20, 180);
+    lv_dropdown_set_selected(param_dropdown, DEFAULT_PARAMETER_INDEX);
     lv_obj_add_event_cb(param_dropdown, parameter_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
+    //Reset to default button
+    static lv_obj_t* dropdowns[2];
+    dropdowns[0] = city_dropdown;
+    dropdowns[1] = param_dropdown;
+    
+    lv_obj_t* reset_btn = lv_btn_create(parent);
+    lv_obj_set_size(reset_btn, 200, 40);
+    lv_obj_align(reset_btn, LV_ALIGN_BOTTOM_LEFT, 20, -80);
+    lv_obj_add_event_cb(reset_btn, reset_defaults_btn_event_cb, LV_EVENT_CLICKED, dropdowns);
+
+    lv_obj_t* reset_label = lv_label_create(reset_btn);
+    lv_label_set_text(reset_label, "Reset to Default");
+    lv_obj_center(reset_label);
+
+
 
     // Navigation info
     lv_obj_t* nav_label = lv_label_create(parent);
