@@ -10,8 +10,8 @@
 #include <map>
 
 // Wi-Fi credentials (UPPDATERA MED DINA UPPGIFTER)
-static const char* WIFI_SSID     = "xyz";
-static const char* WIFI_PASSWORD = "xyz";
+static const char* WIFI_SSID     = "Mohammad's Galaxy S21 Ultra 5G";
+static const char* WIFI_PASSWORD = "450801MM";
 
 LilyGo_Class amoled;
 
@@ -21,10 +21,15 @@ static lv_obj_t* start_tile;
 static lv_obj_t* forecast_tile;
 static lv_obj_t* history_tile;
 
-// Variabler för historisk data
+// Variables for historical data
 static lv_obj_t* history_slider;
 static lv_obj_t* history_chart;
 static lv_chart_series_t* temp_series;
+static const int HISTORICAL_DATA_POINTS = 720; // 30 days * 24 hours
+static float historicalData[HISTORICAL_DATA_POINTS];
+static int currentDataPoints = 0;
+static int sliderOffset = 0;
+static const int CHART_POINTS = 50; // Number of points to show on chart at once
 
 //Variables for default values for settings
 static const int DEFAULT_CITY_INDEX = 0;
@@ -39,7 +44,6 @@ static lv_obj_t* settings_tile;
 static char selectedCity[40] = "Karlskrona";
 static int selectedCityIndex = 0;  
 static int selectedParameter = 1;
-
 
 // Variabler för väderdata
 struct WeatherDay {
@@ -59,34 +63,21 @@ std::map<std::string,std::array<double,3>> WeatherStation
   {"Kiruna",{180940,67.8500,20.2333}}
 };
 
-//TODO: 
-/*
-functions for getting various parameters from API (get temp, get condition)
-function to create API string
-*/
-
-
 String createSMHIAPIForecastLink()
-    {
-    
+{
     double lat  = WeatherStation["Stockholm"][1];
     double lon  = WeatherStation["Stockholm"][2];
-    String latitudeCord = std::to_string(lat);
-    String longitudeCord = std::to_string(lon);
-
+    String latitudeCord = String(lat, 6);
+    String longitudeCord = String(lon, 6);
 
     String APIVersion = "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/";
     String latitudeLink = "lat/";
     String end = "/data.json";
     
     return (APIVersion + longitudeCord + latitudeLink + latitudeCord + end);
-    //https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/16/lat/58/data.json
-    // Alt. https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2/geotype/point/lon/15.586/lat/56.1616/data.json 
-    }
-
+}
 
 WeatherDay forecastData[7];
-float historicalTemp[30]; // 30 dagars historik
 
 // Function: Hämtar väderdata från SMHI API
 static void fetch_weather_data() {
@@ -105,7 +96,7 @@ static void fetch_weather_data() {
             Serial.println("Weather data received successfully");
             
             // Parse JSON data
-            DynamicJsonDocument doc(16384);
+            JsonDocument doc;
             DeserializationError error = deserializeJson(doc, payload);
             
             if (!error) {
@@ -168,6 +159,130 @@ static void fetch_weather_data() {
     } else {
         Serial.println("WiFi not connected");
     }
+}
+
+// Function: Hämtar historisk data från SMHI API
+static void fetch_historical_data() {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+        
+        // Get the selected city coordinates from your map
+        std::string cityName = selectedCity;
+        double lat = WeatherStation[cityName][1];
+        double lon = WeatherStation[cityName][2];
+        
+        // Create historical API URL for latest-months period
+        String historicalURL = "https://opendata-download-metobs.smhi.se/api/version/1.0/parameter/";
+        historicalURL += String(selectedParameter);
+        historicalURL += "/station/";
+        historicalURL += String((int)WeatherStation[cityName][0]); // Station ID
+        historicalURL += "/period/latest-months/data.json";
+        
+        Serial.println("Fetching historical data from SMHI...");
+        Serial.println(historicalURL);
+        http.begin(historicalURL);
+        int httpCode = http.GET();
+        
+        if (httpCode == 200) {
+            String payload = http.getString();
+            Serial.println("Historical data received successfully");
+            
+            // Parse JSON data
+            JsonDocument doc;
+            DeserializationError error = deserializeJson(doc, payload);
+            
+            if (!error) {
+                JsonArray values = doc["value"];
+                currentDataPoints = 0;
+                
+                // Extract historical values
+                for (JsonObject value : values) {
+                    if (currentDataPoints < HISTORICAL_DATA_POINTS) {
+                        historicalData[currentDataPoints] = value["value"];
+                        currentDataPoints++;
+                    } else {
+                        break;
+                    }
+                }
+                
+                Serial.printf("Processed %d historical data points\n", currentDataPoints);
+                update_history_chart(); // Update the chart with new data
+                
+            } else {
+                Serial.println("Historical JSON parsing failed");
+            }
+            
+        } else {
+            Serial.printf("Historical HTTP error: %d\n", httpCode);
+        }
+        http.end();
+    } else {
+        Serial.println("WiFi not connected for historical data");
+    }
+}
+
+// Function: Uppdaterar historisk data chart
+static void update_history_chart() {
+    if (history_chart && temp_series && currentDataPoints > 0) {
+        lv_chart_set_point_count(history_chart, CHART_POINTS);
+        
+        // Clear previous data
+        lv_chart_refresh(history_chart);
+        
+        // Add data points based on slider position
+        int pointsToShow = min(CHART_POINTS, currentDataPoints - sliderOffset);
+        
+        for (int i = 0; i < pointsToShow; i++) {
+            int dataIndex = sliderOffset + i;
+            if (dataIndex < currentDataPoints) {
+                temp_series->y_points[i] = (lv_coord_t)historicalData[dataIndex];
+            }
+        }
+        
+        lv_chart_refresh(history_chart);
+        
+        // Update current value display (show latest value)
+        if (currentDataPoints > 0) {
+            float currentValue = historicalData[currentDataPoints - 1];
+            lv_obj_t* current_label = lv_obj_get_child(history_tile, 1); // Second child is current value label
+            if (current_label) {
+                char current_str[30];
+                snprintf(current_str, sizeof(current_str), "Current: %.1f°C", currentValue);
+                lv_label_set_text(current_label, current_str);
+            }
+        }
+        
+        // Keep fixed Y-axis range from -10 to 30
+        lv_chart_set_range(history_chart, LV_CHART_AXIS_PRIMARY_Y, -10, 30);
+    }
+}
+// Helper function to map values
+static int map(int x, int in_min, int in_max, int out_min, int out_max) {
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+// Helper function to find minimum
+static float min(float a, float b) {
+    return (a < b) ? a : b;
+}
+
+// Helper function to find maximum
+static float max(float a, float b) {
+    return (a > b) ? a : b;
+}
+
+// Event callback för slider
+static void history_slider_event_cb(lv_event_t* e) {
+    lv_obj_t* slider = lv_event_get_target(e);
+    int32_t value = lv_slider_get_value(slider);
+    
+    if (currentDataPoints > CHART_POINTS) {
+        // Calculate which portion of data to show based on slider
+        sliderOffset = map(value, 0, 100, 0, currentDataPoints - CHART_POINTS);
+        update_history_chart();
+    }
+    
+    Serial.printf("Slider value: %d, Offset: %d\n", value, sliderOffset);
 }
 
 // Function: Uppdaterar prognos-skärmen med riktig data
@@ -289,22 +404,6 @@ static void create_forecast_screen(lv_obj_t* parent) {
         lv_obj_set_style_text_font(condition_label, &lv_font_montserrat_12, 0);
         lv_obj_align(condition_label, LV_ALIGN_CENTER, 0, 8);
     }
-
-/*
-Alessandro Needs to figure out how to show icons, the pieces are there...
-but braincells aren't
-It seems that when we create the tiles we need a way to fetch condition data to then display
-the icon, might need some sort of get function to get that info tho
-lv_obj_t * icon = lv_image_create(lv_screen_active(), NULL);
-
-From variable 
-lv_image_set_src(icon, &my_icon_dsc);
-
- From file 
-lv_image_set_src(icon, "S:my_icon.bin");
-
-
-*/
     
     // Navigation instruktion
     lv_obj_t* nav_label = lv_label_create(parent);
@@ -314,53 +413,87 @@ lv_image_set_src(icon, "S:my_icon.bin");
     lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -10);
 }
 
-// Function: Skapar historisk data skärm
+// Function: Skapar historisk data skärm med enkla axis values
 static void create_history_screen(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(parent, lv_color_white(), 0);
     
     // Titel
     lv_obj_t* title_label = lv_label_create(parent);
-    lv_label_set_text(title_label, "Historical Temperature Data");
+    lv_label_set_text(title_label, "Historical Data");
     lv_obj_set_style_text_color(title_label, lv_color_black(), 0);
     lv_obj_set_style_text_font(title_label, &lv_font_montserrat_22, 0);
     lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 10);
     
+    // Current value display (top right)
+    lv_obj_t* current_value_label = lv_label_create(parent);
+    lv_label_set_text(current_value_label, "Current: --");
+    lv_obj_set_style_text_color(current_value_label, lv_color_hex(0x333333), 0);
+    lv_obj_set_style_text_font(current_value_label, &lv_font_montserrat_14, 0);
+    lv_obj_align_to(current_value_label, parent, LV_ALIGN_TOP_RIGHT, -20, 15);
+    
     // Temperatur chart
     history_chart = lv_chart_create(parent);
-    lv_obj_set_size(history_chart, 400,     200);
+    lv_obj_set_size(history_chart, 380, 180);
     lv_obj_align(history_chart, LV_ALIGN_TOP_MID, 0, 50);
     lv_chart_set_type(history_chart, LV_CHART_TYPE_LINE);
-    lv_chart_set_range(history_chart, LV_CHART_AXIS_PRIMARY_Y, -10, 30);
-    lv_chart_set_point_count(history_chart, 30);
     lv_chart_set_div_line_count(history_chart, 5, 5);
+    lv_chart_set_point_count(history_chart, CHART_POINTS);
+    lv_chart_set_range(history_chart, LV_CHART_AXIS_PRIMARY_Y, -10, 30);
     
-    // Axis labels
-    lv_obj_t* y_label = lv_label_create(parent);
-    lv_label_set_text(y_label, "°C");
-    lv_obj_set_style_text_color(y_label, lv_color_black(), 0);
-    lv_obj_align_to(y_label, history_chart, LV_ALIGN_OUT_LEFT_MID, -15, 0);
+    // Simple Y-axis values (-10 to 30)
+    lv_obj_t* y_min_label = lv_label_create(parent);
+    lv_label_set_text(y_min_label, "-10");
+    lv_obj_set_style_text_color(y_min_label, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_text_font(y_min_label, &lv_font_montserrat_12, 0);
+    lv_obj_align_to(y_min_label, history_chart, LV_ALIGN_OUT_BOTTOM_LEFT, -20, -5);
+    
+    lv_obj_t* y_max_label = lv_label_create(parent);
+    lv_label_set_text(y_max_label, "30");
+    lv_obj_set_style_text_color(y_max_label, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_text_font(y_max_label, &lv_font_montserrat_12, 0);
+    lv_obj_align_to(y_max_label, history_chart, LV_ALIGN_OUT_TOP_LEFT, -20, 5);
+    
+    // Y-axis unit
+    lv_obj_t* y_unit_label = lv_label_create(parent);
+    lv_label_set_text(y_unit_label, "°C");
+    lv_obj_set_style_text_color(y_unit_label, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_text_font(y_unit_label, &lv_font_montserrat_12, 0);
+    lv_obj_align_to(y_unit_label, history_chart, LV_ALIGN_OUT_LEFT_MID, -35, 0);
+    
+    // Simple X-axis labels
+    lv_obj_t* x_start_label = lv_label_create(parent);
+    lv_label_set_text(x_start_label, "Older");
+    lv_obj_set_style_text_color(x_start_label, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_text_font(x_start_label, &lv_font_montserrat_12, 0);
+    lv_obj_align_to(x_start_label, history_chart, LV_ALIGN_OUT_BOTTOM_LEFT, 10, 5);
+    
+    lv_obj_t* x_end_label = lv_label_create(parent);
+    lv_label_set_text(x_end_label, "Newer");
+    lv_obj_set_style_text_color(x_end_label, lv_color_hex(0x666666), 0);
+    lv_obj_set_style_text_font(x_end_label, &lv_font_montserrat_12, 0);
+    lv_obj_align_to(x_end_label, history_chart, LV_ALIGN_OUT_BOTTOM_RIGHT, -10, 5);
     
     // Chart series
     temp_series = lv_chart_add_series(history_chart, lv_palette_main(LV_PALETTE_RED), LV_CHART_AXIS_PRIMARY_Y);
     
-    // Fyll med exempeldata (ersätt med riktig data senare)
-    for (int i = 0; i < 30; i++) {
-        temp_series->y_points[i] = 10 + sin(i * 0.2) * 8; // Simulerad data
+    // Initialize with empty data
+    for (int i = 0; i < CHART_POINTS; i++) {
+        temp_series->y_points[i] = 0;
     }
     lv_chart_refresh(history_chart);
     
     // Slider för att bläddra i historik
     history_slider = lv_slider_create(parent);
-    lv_obj_set_size(history_slider, 400, 20);
+    lv_obj_set_size(history_slider, 380, 20);
     lv_obj_align(history_slider, LV_ALIGN_BOTTOM_MID, 0, -50);
     lv_slider_set_range(history_slider, 0, 100);
     lv_slider_set_value(history_slider, 100, LV_ANIM_OFF);
     
     // Slider label
     lv_obj_t* slider_label = lv_label_create(parent);
-    lv_label_set_text(slider_label, "Scroll through historical data");
+    lv_label_set_text(slider_label, "Scroll through data");
     lv_obj_set_style_text_color(slider_label, lv_color_black(), 0);
-    lv_obj_set_style_text_font(slider_label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_font(slider_label, &lv_font_montserrat_14, 0);
     lv_obj_align_to(slider_label, history_slider, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
     
     // Navigation instruktion
@@ -371,17 +504,7 @@ static void create_history_screen(lv_obj_t* parent) {
     lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -10);
 }
 
-// Event callback för slider
-static void history_slider_event_cb(lv_event_t* e) {
-    lv_obj_t* slider = lv_event_get_target(e);
-    int32_t value = lv_slider_get_value(slider);
-    
-    // Uppdatera chart baserat på slider position
-    // Här skulle du hämta och visa relevant historisk data
-    Serial.printf("Slider value: %d\n", value);
-}
-
-                    //Settings Screen//
+//Settings Screen//
 //City selector event
 static void city_dropdown_event_cb(lv_event_t* e) {
     lv_obj_t* dd = lv_event_get_target(e);
@@ -400,9 +523,8 @@ static void city_dropdown_event_cb(lv_event_t* e) {
     
     fetch_weather_data();
     update_forecast_display();
+    fetch_historical_data();
 }
-
-
 
 //Weather parameter selector event
 static void parameter_dropdown_event_cb(lv_event_t* e) {
@@ -413,6 +535,7 @@ static void parameter_dropdown_event_cb(lv_event_t* e) {
     Serial.printf("Selected parameter: %d\n", selectedParameter);
 
     update_forecast_display();
+    fetch_historical_data();
 }
 
 //Event to make the resetbutton work
@@ -433,6 +556,7 @@ static void reset_defaults_event_cb(lv_event_t* e)
     // Updates the screens that settings affect
     fetch_weather_data();
     update_forecast_display();
+    fetch_historical_data();
 
     Serial.println("Settings reset to default!");
 }
@@ -466,7 +590,6 @@ static void create_settings_screen(lv_obj_t* parent)
     lv_dropdown_set_selected(city_dropdown, DEFAULT_CITY_INDEX);
     lv_obj_add_event_cb(city_dropdown, city_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
-
     // Parameter dropdown
     lv_obj_t* param_label = lv_label_create(parent);
     lv_label_set_text(param_label, "Select Weather Parameter:");
@@ -492,13 +615,11 @@ static void create_settings_screen(lv_obj_t* parent)
     lv_obj_t* reset_btn = lv_btn_create(parent);
     lv_obj_set_size(reset_btn, 200, 40);
     lv_obj_align(reset_btn, LV_ALIGN_BOTTOM_LEFT, 20, -80);
-    lv_obj_add_event_cb(reset_btn, reset_defaults_btn_event_cb, LV_EVENT_CLICKED, dropdowns);
+    lv_obj_add_event_cb(reset_btn, reset_defaults_event_cb, LV_EVENT_CLICKED, dropdowns);
 
     lv_obj_t* reset_label = lv_label_create(reset_btn);
     lv_label_set_text(reset_label, "Reset to Default");
     lv_obj_center(reset_label);
-
-
 
     // Navigation info
     lv_obj_t* nav_label = lv_label_create(parent);
@@ -575,6 +696,7 @@ void setup() {
     // Hämta initial väderdata
     fetch_weather_data();
     update_forecast_display();
+    fetch_historical_data();
     
     Serial.println("Setup completed successfully");
 }
@@ -589,6 +711,7 @@ void loop() {
         Serial.println("Updating weather data...");
         fetch_weather_data();
         update_forecast_display();
+        fetch_historical_data();
         lastUpdate = millis();
     }
 }
