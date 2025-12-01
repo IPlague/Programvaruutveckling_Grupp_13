@@ -375,6 +375,7 @@ static void create_forecast_screen(lv_obj_t* parent) {
     lv_obj_set_style_bg_opa(days_container, LV_OPA_0, 0);
     
     // Skapa 7 dagar
+    //Change to use weather struct to iterate instead of days
     const char* days[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
     for (int i = 0; i < 7; i++) {
         lv_obj_t* day_container = lv_obj_create(days_container);
