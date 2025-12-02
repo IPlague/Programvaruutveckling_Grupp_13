@@ -10,8 +10,8 @@
 #include <map>
 
 // Wi-Fi credentials (UPPDATERA MED DINA UPPGIFTER)
-static const char* WIFI_SSID     = "Mohammad's Galaxy S21 Ultra 5G";
-static const char* WIFI_PASSWORD = "450801MM";
+static const char* WIFI_SSID     = "xxx";
+static const char* WIFI_PASSWORD = "xxx";
 
 LilyGo_Class amoled;
 
@@ -334,7 +334,7 @@ static void create_start_screen(lv_obj_t* parent) {
     
     // Programversion
     lv_obj_t* version_label = lv_label_create(parent);
-    lv_label_set_text(version_label, "Version 1.0");
+    lv_label_set_text(version_label, "Version 0.7");
     lv_obj_set_style_text_color(version_label, lv_color_black(), 0);
     lv_obj_set_style_text_font(version_label, &lv_font_montserrat_20, 0);
     lv_obj_align(version_label, LV_ALIGN_TOP_MID, 0, 120);
@@ -348,7 +348,7 @@ static void create_start_screen(lv_obj_t* parent) {
     
     // Instruktion för navigation
     lv_obj_t* nav_label = lv_label_create(parent);
-    lv_label_set_text(nav_label, "Swipe right for forecast");
+    lv_label_set_text(nav_label, "Forecast screen ->");
     lv_obj_set_style_text_color(nav_label, lv_color_hex(0xCCCCCC), 0);
     lv_obj_set_style_text_font(nav_label, &lv_font_montserrat_16, 0);
     lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -20);
@@ -407,7 +407,7 @@ static void create_forecast_screen(lv_obj_t* parent) {
     
     // Navigation instruktion
     lv_obj_t* nav_label = lv_label_create(parent);
-    lv_label_set_text(nav_label, "Swipe left/right to navigate");
+    lv_label_set_text(nav_label, "<- Start screen | History screen ->");
     lv_obj_set_style_text_color(nav_label, lv_color_hex(0x666666), 0);
     lv_obj_set_style_text_font(nav_label, &lv_font_montserrat_14, 0);
     lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -10);
@@ -498,7 +498,7 @@ static void create_history_screen(lv_obj_t* parent) {
     
     // Navigation instruktion
     lv_obj_t* nav_label = lv_label_create(parent);
-    lv_label_set_text(nav_label, "Swipe left for forecast");
+    lv_label_set_text(nav_label, "<- Forecast screen | Settings screen ->");
     lv_obj_set_style_text_color(nav_label, lv_color_hex(0x666666), 0);
     lv_obj_set_style_text_font(nav_label, &lv_font_montserrat_14, 0);
     lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -10);
@@ -623,7 +623,7 @@ static void create_settings_screen(lv_obj_t* parent)
 
     // Navigation info
     lv_obj_t* nav_label = lv_label_create(parent);
-    lv_label_set_text(nav_label, "Swipe left for history screen");
+    lv_label_set_text(nav_label, "<- History screen");
     lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -20);
 }
 
