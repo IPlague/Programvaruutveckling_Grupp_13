@@ -50,6 +50,7 @@ struct WeatherDay {
     char date[20];
     float temperature;
     int symbol_code;
+    const char* symbolToText;
 };
 
 //Adderade en map där du har stadens namn som "key" och en array som "value"
@@ -78,7 +79,7 @@ std::map<std::string, String> ForecastAPI
     {"Göteborg","https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/11.9673/lat/57.6996/data.json?parameters=air_temperature,symbol_code" },
     {"Malmö", "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/13.0715/lat/55.6100/data.json?parameters=air_temperature,symbol_code"},
     {"Kiruna", "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/20.2333/lat/67.8500/data.json?parameters=air_temperature,symbol_code"},
-}
+};
 // use https://opendata.smhi.se/metfcst/snow1gv1/parameters to check weather symbols
 const char* symbolToText(int code) {
     switch (code) {
@@ -173,7 +174,7 @@ if (WiFi.status() != WL_CONNECTED) {
         if (strstr(validTime, "T12:00:00Z")) {
             forecastData[daysFound].temperature = entry["parameters"][0]["values"][0]; // t
             forecastData[daysFound].symbol_code = entry["parameters"][1]["values"][0]; // Wsymb2
-            forecastData[daysFound].condition = symbolToText(forecastData[daysFound].symbol_code);
+            forecastData[daysFound].symbolToText = symbolToText(entry["parameters"][1]["values"][0]);
 
             // Save date
             snprintf(forecastData[daysFound].date, sizeof(forecastData[daysFound].date), "%.10s", validTime);
@@ -416,10 +417,9 @@ static void update_forecast_display() {
                 if (lv_obj_get_child_cnt(day_container) > 2) {
                     lv_obj_t* condition_label = lv_obj_get_child(day_container, 2);
                     if (condition_label) {
-                        lv_label_set_text(condition_label, forecastData[i].condition);
-                        lv_img_set_src(condition_icon,ConditionAddress[forecastData[i].condition]);
-                    }
-                }
+                        lv_label_set_text(condition_label, forecastData[i].symbolToText);
+    }
+}
             }
         }
     }
@@ -468,14 +468,14 @@ static void create_start_screen(lv_obj_t* parent) {
 // Function: Skapar prognosskärm
 static void create_forecast_screen(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(parent, lv_color_white(), 0);
-    
+
     // Titel
     lv_obj_t* title_label = lv_label_create(parent);
     lv_label_set_text(title_label, "7-Day Forecast - Karlskrona");
     lv_obj_set_style_text_color(title_label, lv_color_black(), 0);
     lv_obj_set_style_text_font(title_label, &lv_font_montserrat_22, 0);
     lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 10);
-    
+
     // Container för dagar
     lv_obj_t* days_container = lv_obj_create(parent);
     lv_obj_set_size(days_container, 440, 300);
@@ -484,7 +484,7 @@ static void create_forecast_screen(lv_obj_t* parent) {
     lv_obj_set_flex_align(days_container, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_border_width(days_container, 0, 0);
     lv_obj_set_style_bg_opa(days_container, LV_OPA_0, 0);
-    
+
     // Skapa 7 dagar
     //Change to use weather struct to iterate instead of days
     const char* days[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
@@ -494,31 +494,29 @@ static void create_forecast_screen(lv_obj_t* parent) {
         lv_obj_set_style_border_width(day_container, 1, 0);
         lv_obj_set_style_border_color(day_container, lv_color_hex(0xCCCCCC), 0);
         lv_obj_set_style_radius(day_container, 8, 0);
-        
+
         // Dag namn
         lv_obj_t* day_label = lv_label_create(day_container);
         lv_label_set_text(day_label, days[i]);
         lv_obj_set_style_text_color(day_label, lv_color_black(), 0);
         lv_obj_set_style_text_font(day_label, &lv_font_montserrat_16, 0);
         lv_obj_align(day_label, LV_ALIGN_TOP_MID, 0, 5);
-        
+
         // Temperatur (placeholder)
         lv_obj_t* temp_label = lv_label_create(day_container);
-        lv_label_set_text(temp_label,forecastData[i].condition);
+        lv_label_set_text(temp_label,forecastData[i].symbolToText);
         lv_obj_set_style_text_color(temp_label, lv_color_black(), 0);
         lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_14, 0);
         lv_obj_align(temp_label, LV_ALIGN_BOTTOM_MID, 0, -5);
         //Alessandro changed this, make sure it works
         // Väderförhållanden
         lv_obj_t* condition_label = lv_label_create(day_container);
-        lv_obj_t * condition_icon = lv_img_create(lv_scr_act(), NULL);
-        lv_label_set_text(condition_label, forecastData[i].condition);
-        lv_img_set_src(condition_icon,ConditionAddress[forecastData[i].condition]);
+        lv_label_set_text(condition_label, forecastData[i].symbolToText);
         lv_obj_set_style_text_color(condition_label, lv_color_hex(0x666666), 0);
         lv_obj_set_style_text_font(condition_label, &lv_font_montserrat_12, 0);
         lv_obj_align(condition_label, LV_ALIGN_CENTER, 0, 8);
     }
-    
+
     // Navigation instruktion
     lv_obj_t* nav_label = lv_label_create(parent);
     lv_label_set_text(nav_label, "Swipe left/right to navigate");
