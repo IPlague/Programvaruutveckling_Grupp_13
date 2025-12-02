@@ -9,6 +9,8 @@
 #include <lvgl.h>
 #include <map>
 
+
+
 // Wi-Fi credentials (UPPDATERA MED DINA UPPGIFTER)
 static const char* WIFI_SSID     = "Mohammad's Galaxy S21 Ultra 5G";
 static const char* WIFI_PASSWORD = "450801MM";
@@ -52,6 +54,17 @@ struct WeatherDay {
     int symbol_code;
     const char* symbolToText;
 };
+
+extern "C" {
+    #include "icons/cloudy.c"
+    #include "icons/lightning.c"
+    #include "icons/Rainy.c"
+    #include "icons/SnowAndRain.c"
+    #include "icons/Snowy.c"
+    #include "icons/Sunny.c"
+    #include "icons/SunnyCloud.c"
+    
+}
 
 //Adderade en map där du har stadens namn som "key" och en array som "value"
 //Arrayen innehåller stadens "id", Latitud och Longitud i den specifik ordningen
@@ -465,6 +478,22 @@ static void create_start_screen(lv_obj_t* parent) {
     lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -20);
 }
 
+//converterar datum till rätt dag
+const char* getWeekday(const char* isoDate)
+{
+    struct tm t = {};
+    // yyyy-mm-dd
+    sscanf(isoDate, "%d-%d-%d", &t.tm_year, &t.tm_mon, &t.tm_mday);
+    t.tm_year -= 1900;
+    t.tm_mon  -= 1;
+
+    mktime(&t); 
+
+    static const char* names[] = {"Sun","Mon","Tue","Wed","Thu","Fri","Sat"};
+    return names[t.tm_wday];
+}
+
+
 // Function: Skapar prognosskärm
 static void create_forecast_screen(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(parent, lv_color_white(), 0);
@@ -487,7 +516,6 @@ static void create_forecast_screen(lv_obj_t* parent) {
 
     // Skapa 7 dagar
     //Change to use weather struct to iterate instead of days
-    const char* days[] = {"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"};
     for (int i = 0; i < 7; i++) {
         lv_obj_t* day_container = lv_obj_create(days_container);
         lv_obj_set_size(day_container, 110, 80);
@@ -495,12 +523,14 @@ static void create_forecast_screen(lv_obj_t* parent) {
         lv_obj_set_style_border_color(day_container, lv_color_hex(0xCCCCCC), 0);
         lv_obj_set_style_radius(day_container, 8, 0);
 
-        // Dag namn
+        // --- Day label (real weekday) ---
         lv_obj_t* day_label = lv_label_create(day_container);
-        lv_label_set_text(day_label, days[i]);
+        const char* dayName = getWeekday(forecastData[i].date);
+        lv_label_set_text(day_label, dayName);
         lv_obj_set_style_text_color(day_label, lv_color_black(), 0);
         lv_obj_set_style_text_font(day_label, &lv_font_montserrat_16, 0);
         lv_obj_align(day_label, LV_ALIGN_TOP_MID, 0, 5);
+
 
         // Temperatur (placeholder)
         lv_obj_t* temp_label = lv_label_create(day_container);
