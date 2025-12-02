@@ -49,7 +49,7 @@ static int selectedParameter = 1;
 struct WeatherDay {
     char date[20];
     float temperature;
-    const char* condition;
+    int symbol_code;
 };
 
 //Adderade en map där du har stadens namn som "key" och en array som "value"
@@ -63,24 +63,58 @@ std::map<std::string,std::array<double,3>> WeatherStation
   {"Kiruna",{180940,67.8500,20.2333}}
 };
 
-//map som innehåller olika condition som är kopplad till bildadresserna
-//OBS need to create a questionmark icon for unknown, currently cloudy
-//OBS havent tested yet, currently using full address path, might need to change to relative path
-//OBS currently no choice for sunny
-std::map<std::string, std::string> ConditionAddress
-{
-    {"Partly cloudy","C:\Users\ale04\Downloads\DawProject\Programvaruutveckling_Grupp_13\ESP32\ESP32-T4-S3-Skeleton-main\project\icons\SunnyCloud.c" },
-    {"Cloudy", "C:\Users\ale04\Downloads\DawProject\Programvaruutveckling_Grupp_13\ESP32\ESP32-T4-S3-Skeleton-main\project\icons\Cloudy (1).c"},
-    {"Overcast","C:\Users\ale04\Downloads\DawProject\Programvaruutveckling_Grupp_13\ESP32\ESP32-T4-S3-Skeleton-main\project\icons\Cloudy (1).c" },
-    {"Rain", "C:\Users\ale04\Downloads\DawProject\Programvaruutveckling_Grupp_13\ESP32\ESP32-T4-S3-Skeleton-main\project\icons\Rainy.c"},
-    {"Thunder", "C:\Users\ale04\Downloads\DawProject\Programvaruutveckling_Grupp_13\ESP32\ESP32-T4-S3-Skeleton-main\project\icons\Lightning.c"},
-    {"Snow","C:\Users\ale04\Downloads\DawProject\Programvaruutveckling_Grupp_13\ESP32\ESP32-T4-S3-Skeleton-main\project\icons\Snowy.c" },
-    {"Unknown", "C:\Users\ale04\Downloads\DawProject\Programvaruutveckling_Grupp_13\ESP32\ESP32-T4-S3-Skeleton-main\project\icons\Cloudy (1).c"},
+/*
+US1.2C: As a user, I want to see the weather forecast for the next 7 days for the
+selected city on the second screen in terms of temperature and weather conditions
+with symbols (e.g., clear sky, rain, snow, thunder) per day at 12:00
 
+https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/16/lat/58/data.json?parameters=air_temperature,symbol_code
+
+*/
+std::map<std::string, String> ForecastAPI
+{
+    {"Stockholm", "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/17.9545/lat/59.6269/data.json?parameters=air_temperature,symbol_code"},
+    {"Karlskrona","https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/15.5890/lat/56.1500/data.json?parameters=air_temperature,symbol_code" },
+    {"Göteborg","https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/11.9673/lat/57.6996/data.json?parameters=air_temperature,symbol_code" },
+    {"Malmö", "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/13.0715/lat/55.6100/data.json?parameters=air_temperature,symbol_code"},
+    {"Kiruna", "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/20.2333/lat/67.8500/data.json?parameters=air_temperature,symbol_code"},
+}
+// use https://opendata.smhi.se/metfcst/snow1gv1/parameters to check weather symbols
+const char* symbolToText(int code) {
+    switch (code) {
+        case 1: return "Clear";
+        case 2: return "Partly cloudy";
+        case 3: return "Cloudy";
+        case 4: return "Overcast";
+        case 5: return "Cloudy";
+        case 6: return "Cloudy";
+        case 7: return "Cloudy";
+        case 8: return "Rainy";
+        case 9: return "Rainy";
+        case 10: return "Rainy";
+        case 11: return "Thunder";
+        case 12: return "SnowyRain";
+        case 13: return "SnowyRain";
+        case 14: return "SnowyRain";
+        case 15: return "Snow";
+        case 16: return "Snow";
+        case 17: return "Snow";
+        case 18: return "Rainy";
+        case 19: return "Rainy";
+        case 20: return "Rainy";
+        case 21: return "Thunder";
+        case 22: return "SnowyRain";
+        case 23: return "SnowyRain";
+        case 24: return "SnowyRain";
+        case 25: return "Snow";
+        case 26: return "Snow";
+        case 27: return "Snow";
+        default: return "Unknown";
+    }
 }
 
-
-String createSMHIAPIForecastLink()
+//Not needed anymore
+/*String createSMHIAPIForecastLink()
 {
     double lat  = WeatherStation[selectedCity][1];
     double lon  = WeatherStation[SelectedCity][2];
@@ -93,9 +127,66 @@ String createSMHIAPIForecastLink()
     
     return (APIVersion + longitudeCord + latitudeLink + latitudeCord + end);
 }
+    */
+
+
 
 WeatherDay forecastData[7];
 
+static void fetch_weather_data(){
+
+if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi not connected");
+        return;
+    }
+
+    HTTPClient http;
+    String forecastURL = selectedCity; // Your function to generate the URL
+    Serial.println("Fetching weather data from SMHI...");
+    http.begin(forecastURL);
+
+    int httpCode = http.GET();
+    if (httpCode != HTTP_CODE_OK) {
+        Serial.printf("HTTP GET failed, code: %d\n", httpCode);
+        http.end();
+        return;
+    }
+
+    // Use a StaticJsonDocument to avoid storing the entire JSON in a String
+    StaticJsonDocument<15000> doc; // 15 KB should be enough for 10 KB JSON
+    DeserializationError error = deserializeJson(doc, http.getStream());
+    http.end();
+
+    if (error) {
+        Serial.print("JSON parsing failed: ");
+        Serial.println(error.c_str());
+        return;
+    }
+
+    JsonArray timeSeries = doc["timeSeries"];
+    int daysFound = 0;
+
+    for (JsonObject entry : timeSeries) {
+        if (daysFound >= 7) break;
+
+        const char* validTime = entry["validTime"];
+        if (strstr(validTime, "T12:00:00Z")) {
+            forecastData[daysFound].temperature = entry["parameters"][0]["values"][0]; // t
+            forecastData[daysFound].symbol_code = entry["parameters"][1]["values"][0]; // Wsymb2
+            forecastData[daysFound].condition = symbolToText(forecastData[daysFound].symbol_code);
+
+            // Save date
+            snprintf(forecastData[daysFound].date, sizeof(forecastData[daysFound].date), "%.10s", validTime);
+
+            daysFound++;
+        }
+    }
+
+
+
+}
+
+/*
 // Function: Hämtar väderdata från SMHI API
 static void fetch_weather_data() {
     if (WiFi.status() == WL_CONNECTED) {
@@ -177,6 +268,8 @@ static void fetch_weather_data() {
         Serial.println("WiFi not connected");
     }
 }
+
+*/
 
 // Function: Hämtar historisk data från SMHI API
 static void fetch_historical_data() {
