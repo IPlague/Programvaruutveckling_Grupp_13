@@ -21,6 +21,9 @@ static lv_obj_t* start_tile;
 static lv_obj_t* forecast_tile;
 static lv_obj_t* history_tile;
 
+//Variables for forecastscreen
+static lv_obj_t* forecast_title_label;
+
 // Variables for historical data
 static lv_obj_t* history_slider;
 static lv_obj_t* history_chart;
@@ -30,6 +33,7 @@ static float historicalData[HISTORICAL_DATA_POINTS];
 static int currentDataPoints = 0;
 static int sliderOffset = 0;
 static const int CHART_POINTS = 50; // Number of points to show on chart at once
+
 
 //Variables for default values for settings
 static const int DEFAULT_CITY_INDEX = 0;
@@ -359,11 +363,11 @@ static void create_forecast_screen(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(parent, lv_color_white(), 0);
     
     // Titel
-    lv_obj_t* title_label = lv_label_create(parent);
-    lv_label_set_text(title_label, "7-Day Forecast - Karlskrona");
-    lv_obj_set_style_text_color(title_label, lv_color_black(), 0);
-    lv_obj_set_style_text_font(title_label, &lv_font_montserrat_22, 0);
-    lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 10);
+    forecast_title_label = lv_label_create(parent);
+    lv_label_set_text(forecast_title_label, "7-Day Forecast");
+    lv_obj_set_style_text_color(forecast_title_label, lv_color_black(), 0);
+    lv_obj_set_style_text_font(forecast_title_label, &lv_font_montserrat_22, 0);
+    lv_obj_align(forecast_title_label, LV_ALIGN_TOP_MID, 0, 10);
     
     // Container för dagar
     lv_obj_t* days_container = lv_obj_create(parent);
@@ -504,6 +508,13 @@ static void create_history_screen(lv_obj_t* parent) {
     lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -10);
 }
 
+//Helper function for title on forecastscreen
+static void update_forecast_title() {
+    char buffer[60];
+    snprintf(buffer, sizeof(buffer), "7-Day Forecast - %s", selectedCity);
+    lv_label_set_text(forecast_title_label, buffer);
+}
+
 //Settings Screen//
 //City selector event
 static void city_dropdown_event_cb(lv_event_t* e) {
@@ -523,6 +534,7 @@ static void city_dropdown_event_cb(lv_event_t* e) {
     
     fetch_weather_data();
     update_forecast_display();
+    update_forecast_title();
     fetch_historical_data();
 }
 
@@ -692,6 +704,7 @@ void setup() {
 
     connect_wifi();
     create_ui();
+    update_forecast_title();
     
     // Hämta initial väderdata
     fetch_weather_data();
