@@ -63,10 +63,27 @@ std::map<std::string,std::array<double,3>> WeatherStation
   {"Kiruna",{180940,67.8500,20.2333}}
 };
 
+//map som innehåller olika condition som är kopplad till bildadresserna
+//OBS need to create a questionmark icon for unknown, currently cloudy
+//OBS havent tested yet, currently using full address path, might need to change to relative path
+//OBS currently no choice for sunny
+std::map<std::string, std::string> ConditionAddress
+{
+    {"Partly cloudy","C:\Users\ale04\Downloads\DawProject\Programvaruutveckling_Grupp_13\ESP32\ESP32-T4-S3-Skeleton-main\project\icons\SunnyCloud.c" },
+    {"Cloudy", "C:\Users\ale04\Downloads\DawProject\Programvaruutveckling_Grupp_13\ESP32\ESP32-T4-S3-Skeleton-main\project\icons\Cloudy (1).c"},
+    {"Overcast","C:\Users\ale04\Downloads\DawProject\Programvaruutveckling_Grupp_13\ESP32\ESP32-T4-S3-Skeleton-main\project\icons\Cloudy (1).c" },
+    {"Rain", "C:\Users\ale04\Downloads\DawProject\Programvaruutveckling_Grupp_13\ESP32\ESP32-T4-S3-Skeleton-main\project\icons\Rainy.c"},
+    {"Thunder", "C:\Users\ale04\Downloads\DawProject\Programvaruutveckling_Grupp_13\ESP32\ESP32-T4-S3-Skeleton-main\project\icons\Lightning.c"},
+    {"Snow","C:\Users\ale04\Downloads\DawProject\Programvaruutveckling_Grupp_13\ESP32\ESP32-T4-S3-Skeleton-main\project\icons\Snowy.c" },
+    {"Unknown", "C:\Users\ale04\Downloads\DawProject\Programvaruutveckling_Grupp_13\ESP32\ESP32-T4-S3-Skeleton-main\project\icons\Cloudy (1).c"},
+
+}
+
+
 String createSMHIAPIForecastLink()
 {
-    double lat  = WeatherStation["Stockholm"][1];
-    double lon  = WeatherStation["Stockholm"][2];
+    double lat  = WeatherStation[selectedCity][1];
+    double lon  = WeatherStation[SelectedCity][2];
     String latitudeCord = String(lat, 6);
     String longitudeCord = String(lon, 6);
 
@@ -85,7 +102,7 @@ static void fetch_weather_data() {
         HTTPClient http;
         
         // Prognos-API för Karlskrona (lon 15.586, lat 56.1616)
-        String forecastURL = "https://opendata-download-metfcst.smhi.se/api/category/pmp3g/version/2/geotype/point/lon/15.586/lat/56.1616/data.json";
+        String forecastURL = createSMHIAPIForecastLink();
         
         Serial.println("Fetching weather data from SMHI...");
         http.begin(forecastURL);
@@ -301,12 +318,13 @@ static void update_forecast_display() {
                     snprintf(temp_str, 20, "%.1f°C", forecastData[i].temperature);
                     lv_label_set_text(temp_label, temp_str);
                 }
-                
+                //OBS CHECK HERE IF ICON DISPLAY WORKS det känns som att dagarna borde sparas nånstans för att uppdateras
                 // Uppdatera väderförhållanden (tredje child om den finns)
                 if (lv_obj_get_child_cnt(day_container) > 2) {
                     lv_obj_t* condition_label = lv_obj_get_child(day_container, 2);
                     if (condition_label) {
                         lv_label_set_text(condition_label, forecastData[i].condition);
+                        lv_img_set_src(condition_icon,ConditionAddress[forecastData[i].condition]);
                     }
                 }
             }
@@ -393,14 +411,16 @@ static void create_forecast_screen(lv_obj_t* parent) {
         
         // Temperatur (placeholder)
         lv_obj_t* temp_label = lv_label_create(day_container);
-        lv_label_set_text(temp_label, "Loading...");
+        lv_label_set_text(temp_label,forecastData[i].condition);
         lv_obj_set_style_text_color(temp_label, lv_color_black(), 0);
         lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_14, 0);
         lv_obj_align(temp_label, LV_ALIGN_BOTTOM_MID, 0, -5);
-        
+        //Alessandro changed this, make sure it works
         // Väderförhållanden
         lv_obj_t* condition_label = lv_label_create(day_container);
-        lv_label_set_text(condition_label, "-");
+        lv_obj_t * condition_icon = lv_img_create(lv_scr_act(), NULL);
+        lv_label_set_text(condition_label, forecastData[i].condition);
+        lv_img_set_src(condition_icon,ConditionAddress[forecastData[i].condition]);
         lv_obj_set_style_text_color(condition_label, lv_color_hex(0x666666), 0);
         lv_obj_set_style_text_font(condition_label, &lv_font_montserrat_12, 0);
         lv_obj_align(condition_label, LV_ALIGN_CENTER, 0, 8);
