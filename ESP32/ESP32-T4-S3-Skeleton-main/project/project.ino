@@ -508,6 +508,16 @@ static void create_history_screen(lv_obj_t* parent) {
     lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -10);
 }
 
+static void update_selected_city_name() {
+    switch (selectedCityIndex) {
+        case 0: strcpy(selectedCity, "Karlskrona"); break;
+        case 1: strcpy(selectedCity, "Stockholm"); break;
+        case 2: strcpy(selectedCity, "Goteborg"); break;
+        case 3: strcpy(selectedCity, "Malmo"); break;
+        case 4: strcpy(selectedCity, "Kiruna"); break;
+    }
+}
+
 //Helper function for title on forecastscreen
 static void update_forecast_title() {
     char buffer[60];
@@ -521,17 +531,9 @@ static void city_dropdown_event_cb(lv_event_t* e) {
     lv_obj_t* dd = lv_event_get_target(e);
     selectedCityIndex = lv_dropdown_get_selected(dd);
 
-    // Map city index to SMHI API coordinates or station IDs
-    switch (selectedCityIndex) {
-        case 0: strcpy(selectedCity, "Karlskrona"); break;
-        case 1: strcpy(selectedCity, "Stockholm"); break;
-        case 2: strcpy(selectedCity, "Goteborg"); break;
-        case 3: strcpy(selectedCity, "Malmo"); break;
-        case 4: strcpy(selectedCity, "Kiruna"); break;
-    }
-
     Serial.printf("Selected city: %s\n", selectedCity);
-    
+
+    update_selected_city_name();
     fetch_weather_data();
     update_forecast_display();
     update_forecast_title();
@@ -566,8 +568,10 @@ static void reset_defaults_event_cb(lv_event_t* e)
     lv_dropdown_set_selected(param_dd, DEFAULT_PARAMETER_INDEX);
 
     // Updates the screens that settings affect
+    update_selected_city_name();
     fetch_weather_data();
     update_forecast_display();
+    update_forecast_title();
     fetch_historical_data();
 
     Serial.println("Settings reset to default!");
