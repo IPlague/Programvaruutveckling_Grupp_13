@@ -77,7 +77,7 @@ const lv_img_dsc_t* weather_icons[] = {
 };
 
 
-
+lv_obj_t* imgs[7] = { nullptr };
 
 //Adderade en map där du har stadens namn som "key" och en array som "value"
 //Arrayen innehåller stadens "id", Latitud och Longitud i den specifik ordningen
@@ -550,7 +550,7 @@ const char* getWeekday(const char* isoDate)
     return names[t.tm_wday];
 }
 
-lv_obj_t* imgs[7] = { nullptr };
+
 // Function: Skapar prognosskärm
 static void create_forecast_screen(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(parent, lv_color_white(), 0);

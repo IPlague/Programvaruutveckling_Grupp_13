@@ -76,7 +76,10 @@ const LV_ATTRIBUTE_MEM_ALIGN LV_ATTRIBUTE_LARGE_CONST LV_ATTRIBUTE_IMAGE_RAINY u
 };
 
 const lv_img_dsc_t Rainy = {
-    {0, 50, 50, LV_IMG_CF_TRUE_COLOR}, // header: always_zero, w, h, cf
-    50 * 50 * 2,                        // data_size
-    Rainy_map                           // data
+  .header.always_zero = 0,
+  .header.w = 50,
+  .header.h = 50,
+  .data_size = 2500 * 2,
+  .header.cf = LV_IMG_CF_TRUE_COLOR,
+  .data = Rainy_map,
 };
