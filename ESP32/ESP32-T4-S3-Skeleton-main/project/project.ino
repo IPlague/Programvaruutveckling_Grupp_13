@@ -56,15 +56,28 @@ struct WeatherDay {
 };
 
 extern "C" {
-    #include "icons/cloudy.c"
-    #include "icons/lightning.c"
-    #include "icons/Rainy.c"
-    #include "icons/SnowAndRain.c"
-    #include "icons/Snowy.c"
-    #include "icons/Sunny.c"
-    #include "icons/SunnyCloud.c"
+    #include "icons/Cloudy.h"
+    #include "icons/Lightning.h"
+    #include "icons/Rainy.h"
+    #include "icons/SnowAndRain.h"
+    #include "icons/Snowy.h"
+    #include "icons/Sunny.h"
+    #include "icons/SunnyCloud.h"
     
 }
+
+const lv_img_dsc_t* weather_icons[] = {
+    &Cloudy,
+    &Lightning,
+    &Rainy,
+    &SnowAndRain,
+    &Snowy,
+    &Sunny,
+    &SunnyCloud
+};
+
+
+
 
 //Adderade en map där du har stadens namn som "key" och en array som "value"
 //Arrayen innehåller stadens "id", Latitud och Longitud i den specifik ordningen
@@ -76,6 +89,8 @@ std::map<std::string,std::array<double,3>> WeatherStation
   {"Malmö",{53300,55.6100,13.0715}},
   {"Kiruna",{180940,67.8500,20.2333}}
 };
+
+
 
 /*
 US1.2C: As a user, I want to see the weather forecast for the next 7 days for the
@@ -96,34 +111,34 @@ std::map<std::string, String> ForecastAPI
 // use https://opendata.smhi.se/metfcst/snow1gv1/parameters to check weather symbols
 const char* symbolToText(int code) {
     switch (code) {
-        case 1: return "Clear";
-        case 2: return "Partly cloudy";
+        case 1: return "Sunny";
+        case 2: return "SunnyCloud";
         case 3: return "Cloudy";
-        case 4: return "Overcast";
+        case 4: return "SunnyCloud";
         case 5: return "Cloudy";
         case 6: return "Cloudy";
         case 7: return "Cloudy";
         case 8: return "Rainy";
         case 9: return "Rainy";
         case 10: return "Rainy";
-        case 11: return "Thunder";
-        case 12: return "SnowyRain";
-        case 13: return "SnowyRain";
-        case 14: return "SnowyRain";
-        case 15: return "Snow";
-        case 16: return "Snow";
-        case 17: return "Snow";
+        case 11: return "Lightning";
+        case 12: return "SnowAndRain";
+        case 13: return "SnowAndRain";
+        case 14: return "SnowAndRain";
+        case 15: return "Snowy";
+        case 16: return "Snowy";
+        case 17: return "Snowy";
         case 18: return "Rainy";
         case 19: return "Rainy";
         case 20: return "Rainy";
-        case 21: return "Thunder";
-        case 22: return "SnowyRain";
-        case 23: return "SnowyRain";
-        case 24: return "SnowyRain";
-        case 25: return "Snow";
-        case 26: return "Snow";
-        case 27: return "Snow";
-        default: return "Unknown";
+        case 21: return "Lightning";
+        case 22: return "SnowAndRain";
+        case 23: return "SnowAndRain";
+        case 24: return "SnowAndRain";
+        case 25: return "Snowy";
+        case 26: return "Snowy";
+        case 27: return "Snowy";
+        default: return "Sunny";
     }
 }
 
@@ -410,7 +425,7 @@ static void history_slider_event_cb(lv_event_t* e) {
 }
 
 // Function: Uppdaterar prognos-skärmen med riktig data
-static void update_forecast_display() {
+/*static void update_forecast_display() {
     lv_obj_t* container = lv_obj_get_child(forecast_tile, 0); // Första child är containern
     
     if (container) {
@@ -437,6 +452,48 @@ static void update_forecast_display() {
         }
     }
 }
+    */
+
+const lv_img_dsc_t* getWeatherIcon(int code) {
+    const char* symbol = symbolToText(code); // get text from code
+
+    if (strcmp(symbol, "Sunny") == 0) return &Sunny;
+    if (strcmp(symbol, "SunnyCloud") == 0) return &SunnyCloud;
+    if (strcmp(symbol, "Cloudy") == 0) return &Cloudy;
+    if (strcmp(symbol, "Rainy") == 0) return &Rainy;
+    if (strcmp(symbol, "Lightning") == 0) return &Lightning;
+    if (strcmp(symbol, "SnowAndRain") == 0) return &SnowAndRain;
+    if (strcmp(symbol, "Snowy") == 0) return &Snowy;
+
+    return &Sunny; // default
+}
+
+
+    static void update_forecast_display() {
+    for (int i = 0; i < 7; i++) {
+
+        // Update icon dynamically
+        if (imgs[i]) {
+            lv_img_set_src(imgs[i], getWeatherIcon(forecastData[i].symbol_code));
+        }
+
+        // Update temperature
+        char temp_str[20];
+        snprintf(temp_str, sizeof(temp_str), "%.1f°C", forecastData[i].temperature);
+
+        lv_obj_t* container = lv_obj_get_child(forecast_tile, 0);
+        lv_obj_t* day_container = lv_obj_get_child(container, i);
+
+        // temp_label is NOW child 2 (after adding icon)
+        lv_obj_t* temp_label = lv_obj_get_child(day_container, 2);
+        lv_label_set_text(temp_label, temp_str);
+
+        // condition label is NOW child 3
+        lv_obj_t* condition_label = lv_obj_get_child(day_container, 3);
+        lv_label_set_text(condition_label, forecastData[i].symbolToText);
+    }
+}
+
 
 // Function: Skapar startskärm
 static void create_start_screen(lv_obj_t* parent) {
@@ -493,7 +550,7 @@ const char* getWeekday(const char* isoDate)
     return names[t.tm_wday];
 }
 
-
+lv_obj_t* imgs[7] = { nullptr };
 // Function: Skapar prognosskärm
 static void create_forecast_screen(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(parent, lv_color_white(), 0);
@@ -532,13 +589,50 @@ static void create_forecast_screen(lv_obj_t* parent) {
         lv_obj_align(day_label, LV_ALIGN_TOP_MID, 0, 5);
 
 
+        imgs[i] = lv_img_create(day_container);
+
+        // Select correct icon based on forecast
+        const lv_img_dsc_t* icon_src = nullptr;
+
+        if(strcmp(forecastData[i].symbolToText, "Cloudy") == 0) {
+            icon_src = &Cloudy;
+        }
+        else if(strcmp(forecastData[i].symbolToText, "Lightning") == 0) {
+            icon_src = &Lightning;
+        }
+        else if(strcmp(forecastData[i].symbolToText, "Rainy") == 0) {
+            icon_src = &Rainy;
+        }
+        else if(strcmp(forecastData[i].symbolToText, "SnowAndRain") == 0) {
+            icon_src = &SnowAndRain;
+        }
+        else if(strcmp(forecastData[i].symbolToText, "Snowy") == 0) {
+            icon_src = &Snowy;
+        }
+        else if(strcmp(forecastData[i].symbolToText, "Sunny") == 0) {
+            icon_src = &Sunny;
+        }
+        else if(strcmp(forecastData[i].symbolToText, "SunnyCloud") == 0) {
+            icon_src = &SunnyCloud;
+        }
+        else{
+            icon_src = &Sunny;
+        }
+        // Set dynamic icon source
+        lv_img_set_src(imgs[i], icon_src);
+
+        // Position icon in the middle
+        lv_obj_align(imgs[i], LV_ALIGN_CENTER, 0, -5);
+
+
+
         // Temperatur (placeholder)
         lv_obj_t* temp_label = lv_label_create(day_container);
         lv_label_set_text(temp_label,forecastData[i].symbolToText);
         lv_obj_set_style_text_color(temp_label, lv_color_black(), 0);
         lv_obj_set_style_text_font(temp_label, &lv_font_montserrat_14, 0);
         lv_obj_align(temp_label, LV_ALIGN_BOTTOM_MID, 0, -5);
-        //Alessandro changed this, make sure it works
+
         // Väderförhållanden
         lv_obj_t* condition_label = lv_label_create(day_container);
         lv_label_set_text(condition_label, forecastData[i].symbolToText);
