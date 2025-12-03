@@ -80,6 +80,6 @@ const lv_img_dsc_t SnowAndRain = {
   .header.w = 50,
   .header.h = 50,
   .data_size = 2500 * 2,
-  .header.cf = LV_IMG_CF_TRUE_COLOR,
+  .header.cf = LV_IMG_CF_TRUE_COLOR_CHROMA_KEYED,
   .data = SnowAndRain_map,
 };
