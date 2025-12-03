@@ -1083,7 +1083,7 @@ const char* symbolToText(int code) {
     }
 }
 
-// Fetch weather forecast data from SMHI API
+/* Fetch weather forecast data from SMHI API
 static void fetch_weather_data() {
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("WiFi not connected");
@@ -1212,6 +1212,178 @@ static void fetch_weather_data() {
     // Update display immediately
     update_forecast_display();
 }
+
+
+*/
+static void fetch_weather_data() {
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("WiFi not connected");
+        return;
+    }
+
+    HTTPClient http;
+    
+    // Get the correct URL from the map
+    if (ForecastAPI.find(selectedCity) == ForecastAPI.end()) {
+        Serial.printf("City %s not found in ForecastAPI map\n", selectedCity);
+        return;
+    }
+    
+    String forecastURL = ForecastAPI[selectedCity];
+    Serial.println("Fetching weather data from: " + forecastURL);
+    
+    http.begin(forecastURL);
+    http.setTimeout(10000); // 10 second timeout
+
+    int httpCode = http.GET();
+    if (httpCode != HTTP_CODE_OK) {
+        Serial.printf("HTTP GET failed, code: %d\n", httpCode);
+        http.end();
+        return;
+    }
+
+    // Parse JSON response
+    DynamicJsonDocument doc(30000);
+    DeserializationError error = deserializeJson(doc, http.getStream());
+    http.end();
+
+    if (error) {
+        Serial.print("JSON parsing failed: ");
+        Serial.println(error.c_str());
+        return;
+    }
+
+    // Debug: Print the JSON structure to understand it
+    Serial.println("JSON structure:");
+    serializeJsonPretty(doc, Serial);
+    Serial.println();
+    
+    // Check if we have timeSeries array in the new format
+    JsonArray timeSeries = doc["timeSeries"];
+    if (!timeSeries) {
+        Serial.println("No timeSeries array found in JSON");
+        return;
+    }
+    
+    int daysFound = 0;
+    int dataPointsFound = 0;
+    
+    // Clear existing data
+    for (int i = 0; i < 7; i++) {
+        forecastData[i].date[0] = '\0';
+        forecastData[i].temperature = 0;
+        forecastData[i].symbol_code = 1;
+        forecastData[i].symbolToText = "Sunny";
+    }
+    
+    Serial.printf("Total data points in timeSeries: %d\n", timeSeries.size());
+    
+    // Look for data at noon (12:00) for the next 7 days
+    for (JsonObject entry : timeSeries) {
+        if (daysFound >= 7) break;
+        
+        dataPointsFound++;
+        
+        const char* timeStr = entry["time"];
+        Serial.printf("Checking time: %s\n", timeStr);
+        
+        // Check if this is at 12:00 (or the closest to noon)
+        if (strstr(timeStr, "T12:00:00Z")) {
+            // Save date (YYYY-MM-DD format)
+            strncpy(forecastData[daysFound].date, timeStr, 10);
+            forecastData[daysFound].date[10] = '\0';
+            
+            // Get data object
+            JsonObject data = entry["data"];
+            
+            // Extract temperature
+            if (data.containsKey("air_temperature")) {
+                forecastData[daysFound].temperature = data["air_temperature"];
+            } else {
+                Serial.println("No air_temperature found in data");
+                forecastData[daysFound].temperature = 0.0;
+            }
+            
+            // Extract symbol code
+            if (data.containsKey("symbol_code")) {
+                forecastData[daysFound].symbol_code = data["symbol_code"];
+            } else {
+                Serial.println("No symbol_code found in data");
+                forecastData[daysFound].symbol_code = 1;
+            }
+            
+            // Convert symbol code to text
+            forecastData[daysFound].symbolToText = symbolToText(forecastData[daysFound].symbol_code);
+            
+            Serial.printf("Found day %d: %s, Temp: %.1f, Symbol: %d (%s)\n", 
+                         daysFound, forecastData[daysFound].date, 
+                         forecastData[daysFound].temperature,
+                         forecastData[daysFound].symbol_code,
+                         forecastData[daysFound].symbolToText);
+            
+            daysFound++;
+        }
+    }
+    
+    // If we didn't find enough noon data, try to find data at different times
+    if (daysFound < 7) {
+        Serial.printf("Only found %d days at noon. Looking for other times...\n", daysFound);
+        
+        // Reset and look for any data points (take one per day)
+        daysFound = 0;
+        String lastDate = "";
+        
+        for (JsonObject entry : timeSeries) {
+            if (daysFound >= 7) break;
+            
+            const char* timeStr = entry["time"];
+            String currentDate = String(timeStr).substring(0, 10); // Get YYYY-MM-DD
+            
+            // If this is a new date, use this data point
+            if (currentDate != lastDate) {
+                lastDate = currentDate;
+                
+                // Save date
+                strncpy(forecastData[daysFound].date, timeStr, 10);
+                forecastData[daysFound].date[10] = '\0';
+                
+                // Get data object
+                JsonObject data = entry["data"];
+                
+                // Extract temperature
+                if (data.containsKey("air_temperature")) {
+                    forecastData[daysFound].temperature = data["air_temperature"];
+                } else {
+                    forecastData[daysFound].temperature = 0.0;
+                }
+                
+                // Extract symbol code
+                if (data.containsKey("symbol_code")) {
+                    forecastData[daysFound].symbol_code = data["symbol_code"];
+                } else {
+                    forecastData[daysFound].symbol_code = 1;
+                }
+                
+                // Convert symbol code to text
+                forecastData[daysFound].symbolToText = symbolToText(forecastData[daysFound].symbol_code);
+                
+                Serial.printf("Using day %d: %s, Temp: %.1f, Symbol: %d (%s)\n", 
+                             daysFound, forecastData[daysFound].date, 
+                             forecastData[daysFound].temperature,
+                             forecastData[daysFound].symbol_code,
+                             forecastData[daysFound].symbolToText);
+                
+                daysFound++;
+            }
+        }
+    }
+    
+    Serial.printf("Total days found: %d\n", daysFound);
+    
+    // Update display immediately
+    update_forecast_display();
+}
+
 
 // Fetch historical data from SMHI API
 static void fetch_historical_data() {
