@@ -1115,7 +1115,7 @@ static void fetch_weather_data() {
         return;
     }
 
-    // Parse JSON response - ArduinoJson v6/v7
+    // Parse JSON response - ArduinoJson v6/v7 MAZ 327680 RAM, 6553600 FLASH
     DynamicJsonDocument doc(350000);
     DeserializationError error = deserializeJson(doc, http.getString()); // Changed to getString()
     http.end();
@@ -1329,11 +1329,13 @@ static void fetch_historical_data() {
         } else {
             Serial.println("Historical JSON parsing failed");
         }
+        doc.clear();
         
     } else {
         Serial.printf("Historical HTTP error: %d\n", httpCode);
     }
     http.end();
+    
 }
 
 // Update historical data chart
