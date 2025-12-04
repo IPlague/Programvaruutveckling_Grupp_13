@@ -629,7 +629,6 @@ void reset_to_user_default() {
     fetch_historical_data();
 
     lv_dropdown_set_selected(city_dropdown, selectedCityIndex);
-    lv_dropdown_set_selected(param_dropdown, paramDropdownIndex);
 
     int paramDropdownIndex = 0;
     for (int i = 0; i < 4; i++) {
