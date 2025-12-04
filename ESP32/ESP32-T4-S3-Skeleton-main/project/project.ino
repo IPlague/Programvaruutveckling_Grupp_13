@@ -8,6 +8,7 @@
 #include <LV_Helper.h>
 #include <lvgl.h>
 #include <map>
+#include <Preferences.h>
 
 // Wi-Fi credentials (UPPDATERA MED DINA UPPGIFTER)
 static const char* WIFI_SSID     = "xxx";
@@ -48,6 +49,18 @@ static lv_obj_t* settings_tile;
 static char selectedCity[40] = "Karlskrona";
 static int selectedCityIndex = 0;  
 static int selectedParameter = 1;
+
+static lv_obj_t* city_dropdown;
+static lv_obj_t* param_dropdown;
+
+Preferences preferences; // for saving things om the Non-volotile flash
+
+// NVS keys
+static const char* PREF_NAMESPACE = "weatherapp";
+static const char* PREF_CITY = "city_index";
+static const char* PREF_PARAM = "param_index";
+
+
 
 // Variabler för väderdata
 struct WeatherDay {
@@ -552,29 +565,81 @@ static void parameter_dropdown_event_cb(lv_event_t* e) {
     fetch_historical_data();
 }
 
-//Event to make the resetbutton work
-static void reset_defaults_event_cb(lv_event_t* e)
-{
-    lv_obj_t** dropdowns = (lv_obj_t**)lv_event_get_user_data(e);
-    lv_obj_t* city_dd  = dropdowns[0];
-    lv_obj_t* param_dd = dropdowns[1];
+//Code to load the city and parameter that has beeen previously set as default
+void load_saved_defaults() {
+    preferences.begin(PREF_NAMESPACE, true); // read-only
 
-    // Reset internal values
-    selectedCityIndex = DEFAULT_CITY_INDEX;
-    selectedParameter = PARAMETER_CODES[DEFAULT_PARAMETER_INDEX];
+    bool hasCity = preferences.isKey(PREF_CITY);
+    bool hasParam = preferences.isKey(PREF_PARAM);
 
-    // Update dropdowns in settings menu to be the default values when resetbutton has been pressed
-    lv_dropdown_set_selected(city_dd, DEFAULT_CITY_INDEX);
-    lv_dropdown_set_selected(param_dd, DEFAULT_PARAMETER_INDEX);
+    if (!hasCity || !hasParam) {
+        // No personal default set yet → use factory defaults
+        selectedCityIndex = DEFAULT_CITY_INDEX;
+        selectedParameter = PARAMETER_CODES[DEFAULT_PARAMETER_INDEX];
+    } else {
+        // Load personal defaults
+        selectedCityIndex = preferences.getInt(PREF_CITY);
+        int savedParamIndex = preferences.getInt(PREF_PARAM);
+        selectedParameter = PARAMETER_CODES[savedParamIndex];
+    }
 
-    // Updates the screens that settings affect
+    preferences.end();
+
     update_selected_city_name();
+}
+
+//Code to save the currently selected items in the drops downs
+void save_current_defaults() {
+    preferences.begin(PREF_NAMESPACE, false);
+
+    int paramIndex = 0;
+    for (int i = 0; i < 4; i++) {
+        if (PARAMETER_CODES[i] == selectedParameter) {
+            paramIndex = i;
+            break;
+        }
+    }
+
+    preferences.putInt(PREF_CITY, selectedCityIndex);
+    preferences.putInt(PREF_PARAM, paramIndex);
+
+    preferences.end();
+
+    Serial.println("Personal default saved.");
+}
+
+//Event to make the resetbutton work
+void reset_to_user_default() {
+    preferences.begin(PREF_NAMESPACE, true);
+
+    selectedCityIndex = preferences.getInt(PREF_CITY, DEFAULT_CITY_INDEX);
+    int paramIndex = preferences.getInt(PREF_PARAM, DEFAULT_PARAMETER_INDEX);
+
+    preferences.end();
+
+    selectedParameter = PARAMETER_CODES[paramIndex];
+    update_selected_city_name();
+
+    Serial.println("Reset to personal default.");
+
+    // Update screens
+    update_forecast_title();
     fetch_weather_data();
     update_forecast_display();
-    update_forecast_title();
     fetch_historical_data();
 
-    Serial.println("Settings reset to default!");
+    lv_dropdown_set_selected(city_dropdown, selectedCityIndex);
+    lv_dropdown_set_selected(param_dropdown, paramDropdownIndex);
+
+    int paramDropdownIndex = 0;
+    for (int i = 0; i < 4; i++) {
+        if (PARAMETER_CODES[i] == selectedParameter) {
+            paramDropdownIndex = i;
+            break;
+        }
+    }
+    lv_dropdown_set_selected(param_dropdown, paramDropdownIndex);
+    
 }
 
 //Creating the settingscreen tile
@@ -593,7 +658,7 @@ static void create_settings_screen(lv_obj_t* parent)
     lv_label_set_text(city_label, "Select City:");
     lv_obj_align(city_label, LV_ALIGN_TOP_LEFT, 20, 60);
 
-    lv_obj_t* city_dropdown = lv_dropdown_create(parent);
+    city_dropdown = lv_dropdown_create(parent);
     lv_dropdown_set_options(city_dropdown,
         "Karlskrona (65090)\n"
         "Stockholm (97400)\n"
@@ -611,7 +676,7 @@ static void create_settings_screen(lv_obj_t* parent)
     lv_label_set_text(param_label, "Select Weather Parameter:");
     lv_obj_align(param_label, LV_ALIGN_TOP_LEFT, 20, 150);
 
-    lv_obj_t* param_dropdown = lv_dropdown_create(parent);
+    param_dropdown = lv_dropdown_create(parent);
     lv_dropdown_set_options(param_dropdown,
         "Temperature (1)\n"
         "Humidity (6)\n"
@@ -623,19 +688,45 @@ static void create_settings_screen(lv_obj_t* parent)
     lv_dropdown_set_selected(param_dropdown, DEFAULT_PARAMETER_INDEX);
     lv_obj_add_event_cb(param_dropdown, parameter_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 
+    //Set stored city index
+    lv_dropdown_set_selected(city_dropdown, selectedCityIndex);
+
+    //
+    int paramDropdownIndex = 0;
+    for (int i = 0; i < 4; i++) {
+        if (PARAMETER_CODES[i] == selectedParameter) {
+            paramDropdownIndex = i;
+            break;
+        }
+    }
+    lv_dropdown_set_selected(param_dropdown, paramDropdownIndex);
+
     //Reset to default button
-    static lv_obj_t* dropdowns[2];
-    dropdowns[0] = city_dropdown;
-    dropdowns[1] = param_dropdown;
-    
     lv_obj_t* reset_btn = lv_btn_create(parent);
     lv_obj_set_size(reset_btn, 200, 40);
     lv_obj_align(reset_btn, LV_ALIGN_BOTTOM_LEFT, 20, -80);
-    lv_obj_add_event_cb(reset_btn, reset_defaults_event_cb, LV_EVENT_CLICKED, dropdowns);
-
+    
+    lv_obj_add_event_cb(reset_btn, [](lv_event_t* e) {
+        reset_to_user_default();
+    }, LV_EVENT_CLICKED, NULL);
+    
     lv_obj_t* reset_label = lv_label_create(reset_btn);
     lv_label_set_text(reset_label, "Reset to Default");
     lv_obj_center(reset_label);
+
+    //Set default button
+    lv_obj_t* save_btn = lv_btn_create(parent);
+    lv_obj_set_size(save_btn, 200, 40);
+    lv_obj_align(save_btn, LV_ALIGN_BOTTOM_LEFT, 20, -30);
+    
+    lv_obj_add_event_cb(save_btn, [](lv_event_t* e) 
+    {
+        save_current_defaults();
+    }, LV_EVENT_CLICKED, NULL);
+    
+    lv_obj_t* save_label = lv_label_create(save_btn);
+    lv_label_set_text(save_label, "Set Default");
+    lv_obj_center(save_label);
 
     // Navigation info
     lv_obj_t* nav_label = lv_label_create(parent);
@@ -694,6 +785,8 @@ void setup() {
     delay(1000);
     
     Serial.println("Starting Weather Station...");
+
+     load_saved_defaults(); //Loading the default options
 
     if (!amoled.begin()) {
         Serial.println("Failed to initialize LilyGO AMOLED");
