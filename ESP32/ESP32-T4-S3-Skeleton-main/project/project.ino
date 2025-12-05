@@ -19,17 +19,16 @@ LilyGo_Class amoled;
 
 // Flash storage files
 static const char* WEATHER_FILE = "/weather.json";
-// static const char* HISTORICAL_FILE = "/historical.json"; // COMMENTED OUT
+static const char* HISTORICAL_FILE = "/historical.json";
 
 // Globala variabler för UI
 static lv_obj_t* tileview;
 static lv_obj_t* start_tile;
 static lv_obj_t* forecast_tile;
-// static lv_obj_t* history_tile; // COMMENTED OUT
+static lv_obj_t* history_tile;
 static lv_obj_t* settings_tile;
 
-// Variables for historical data - COMMENTED OUT
-/*
+// Variables for historical data
 static lv_obj_t* history_slider;
 static lv_obj_t* history_chart;
 static lv_chart_series_t* temp_series;
@@ -38,7 +37,6 @@ static float historicalData[HISTORICAL_DATA_POINTS];
 static int currentDataPoints = 0;
 static int sliderOffset = 0;
 static const int CHART_POINTS = 50; // Number of points to show on chart at once
-*/
 
 // Variables for default values for settings
 static const int DEFAULT_CITY_INDEX = 0;
@@ -207,8 +205,7 @@ static bool load_weather_from_flash() {
     return false;
 }
 
-// Save historical data to flash in chunks - COMMENTED OUT
-/*
+// Save historical data to flash in chunks - OPTIMIZED FOR 1.2MB
 static void save_historical_to_flash() {
     if (currentDataPoints == 0) return;
     
@@ -232,10 +229,8 @@ static void save_historical_to_flash() {
                  currentDataPoints, 
                  (currentDataPoints * sizeof(float)) / 1024.0);
 }
-*/
 
-// Load historical data from flash - COMMENTED OUT
-/*
+// Load historical data from flash - OPTIMIZED
 static bool load_historical_from_flash() {
     File file = SPIFFS.open(HISTORICAL_FILE, "r");
     if (!file || file.size() == 0) {
@@ -287,7 +282,6 @@ static bool load_historical_from_flash() {
     
     return false;
 }
-*/
 
 // Clear old data
 static void clear_old_data() {
@@ -329,7 +323,7 @@ static void fetch_weather_data() {
 
     // Use stream to save memory
     WiFiClient* stream = http.getStreamPtr();
-    DynamicJsonDocument doc(15000);
+    JsonDocument doc;
     DeserializationError error = deserializeJson(doc, *stream);
     http.end();
 
@@ -385,8 +379,7 @@ static void fetch_weather_data() {
     save_weather_to_flash();
 }
 
-// Fetch historical data from SMHI API - COMMENTED OUT
-/*
+// Fetch historical data from SMHI API
 static void fetch_historical_data() {
     if (WiFi.status() != WL_CONNECTED) {
         Serial.println("WiFi not connected");
@@ -421,7 +414,7 @@ static void fetch_historical_data() {
     if (httpCode == 200) {
         // Use stream to save memory
         WiFiClient* stream = http.getStreamPtr();
-        DynamicJsonDocument doc(100000); // Reduced from 200000
+        JsonDocument doc;
         DeserializationError error = deserializeJson(doc, *stream);
         
         if (!error) {
@@ -460,10 +453,8 @@ static void fetch_historical_data() {
     }
     http.end();
 }
-*/
 
-// Update historical data chart - COMMENTED OUT
-/*
+// Update historical data chart
 static void update_history_chart() {
     if (!history_chart || !temp_series || currentDataPoints <= 0) {
         return;
@@ -504,10 +495,8 @@ static void update_history_chart() {
     
     lv_chart_set_range(history_chart, LV_CHART_AXIS_PRIMARY_Y, -10, 30);
 }
-*/
 
-// Event callback for history slider - COMMENTED OUT
-/*
+// Event callback for history slider
 static void history_slider_event_cb(lv_event_t* e) {
     lv_obj_t* slider = lv_event_get_target(e);
     int32_t value = lv_slider_get_value(slider);
@@ -517,7 +506,6 @@ static void history_slider_event_cb(lv_event_t* e) {
         update_history_chart();
     }
 }
-*/
 
 // Get weather icon based on symbol code
 const lv_img_dsc_t* getWeatherIcon(int code) {
@@ -695,8 +683,7 @@ static void create_forecast_screen(lv_obj_t* parent) {
     lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -10);
 }
 
-// Create historical data screen - COMMENTED OUT
-/*
+// Create historical data screen
 static void create_history_screen(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(parent, lv_color_white(), 0);
     
@@ -786,7 +773,6 @@ static void create_history_screen(lv_obj_t* parent) {
     lv_obj_set_style_text_font(nav_label, &lv_font_montserrat_14, 0);
     lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -10);
 }
-*/
 
 // City dropdown event callback
 static void city_dropdown_event_cb(lv_event_t* e) {
@@ -814,11 +800,10 @@ static void city_dropdown_event_cb(lv_event_t* e) {
     
     // Fetch new data
     fetch_weather_data();
-    // fetch_historical_data(); // COMMENTED OUT
+    fetch_historical_data();
 }
 
-// Parameter dropdown event callback - COMMENTED OUT (only for historical data)
-/*
+// Parameter dropdown event callback
 static void parameter_dropdown_event_cb(lv_event_t* e) {
     lv_obj_t* dd = lv_event_get_target(e);
     int index = lv_dropdown_get_selected(dd);
@@ -829,13 +814,12 @@ static void parameter_dropdown_event_cb(lv_event_t* e) {
     // Fetch new historical data with selected parameter
     fetch_historical_data();
 }
-*/
 
 // Reset to defaults event callback
 static void reset_defaults_event_cb(lv_event_t* e) {
     lv_obj_t** dropdowns = (lv_obj_t**)lv_event_get_user_data(e);
     lv_obj_t* city_dd = dropdowns[0];
-    // lv_obj_t* param_dd = dropdowns[1]; // COMMENTED OUT
+    lv_obj_t* param_dd = dropdowns[1];
     
     // Reset to default values
     selectedCityIndex = DEFAULT_CITY_INDEX;
@@ -844,7 +828,7 @@ static void reset_defaults_event_cb(lv_event_t* e) {
     
     // Update dropdowns
     lv_dropdown_set_selected(city_dd, DEFAULT_CITY_INDEX);
-    // lv_dropdown_set_selected(param_dd, DEFAULT_PARAMETER_INDEX); // COMMENTED OUT
+    lv_dropdown_set_selected(param_dd, DEFAULT_PARAMETER_INDEX);
     
     // Update forecast title
     lv_obj_t* title_label = lv_obj_get_child(forecast_tile, 0);
@@ -856,7 +840,7 @@ static void reset_defaults_event_cb(lv_event_t* e) {
     
     // Fetch new data
     fetch_weather_data();
-    // fetch_historical_data(); // COMMENTED OUT
+    fetch_historical_data();
     
     Serial.println("Settings reset to default!");
 }
@@ -890,8 +874,7 @@ static void create_settings_screen(lv_obj_t* parent) {
     lv_dropdown_set_selected(city_dropdown, DEFAULT_CITY_INDEX);
     lv_obj_add_event_cb(city_dropdown, city_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
     
-    // Parameter dropdown - COMMENTED OUT
-    /*
+    // Parameter dropdown
     lv_obj_t* param_label = lv_label_create(parent);
     lv_label_set_text(param_label, "Select Weather Parameter:");
     lv_obj_set_style_text_color(param_label, lv_color_black(), 0);
@@ -908,13 +891,11 @@ static void create_settings_screen(lv_obj_t* parent) {
     lv_obj_align(param_dropdown, LV_ALIGN_TOP_LEFT, 20, 180);
     lv_dropdown_set_selected(param_dropdown, DEFAULT_PARAMETER_INDEX);
     lv_obj_add_event_cb(param_dropdown, parameter_dropdown_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    */
     
     // Reset button
     static lv_obj_t* dropdowns[2];
     dropdowns[0] = city_dropdown;
-    // dropdowns[1] = param_dropdown; // COMMENTED OUT
-    dropdowns[1] = nullptr; // Placeholder
+    dropdowns[1] = param_dropdown;
     
     lv_obj_t* reset_btn = lv_btn_create(parent);
     lv_obj_set_size(reset_btn, 200, 40);
@@ -940,21 +921,20 @@ static void create_ui() {
     lv_obj_set_scrollbar_mode(tileview, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_dir(tileview, LV_DIR_HOR);
     
-    // Create three tiles for different screens (removed history tile)
+    // Create four tiles for different screens
     start_tile = lv_tileview_add_tile(tileview, 0, 0, LV_DIR_RIGHT);
     forecast_tile = lv_tileview_add_tile(tileview, 1, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
-    settings_tile = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_LEFT);
-    // history_tile = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_LEFT | LV_DIR_RIGHT); // COMMENTED OUT
-    // settings_tile = lv_tileview_add_tile(tileview, 3, 0, LV_DIR_LEFT); // Changed index
+    history_tile = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
+    settings_tile = lv_tileview_add_tile(tileview, 3, 0, LV_DIR_LEFT);
     
     // Fill tiles with content
     create_start_screen(start_tile);
     create_forecast_screen(forecast_tile);
-    // create_history_screen(history_tile); // COMMENTED OUT
+    create_history_screen(history_tile);
     create_settings_screen(settings_tile);
     
-    // Add event for slider - COMMENTED OUT
-    // lv_obj_add_event_cb(history_slider, history_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    // Add event for slider
+    lv_obj_add_event_cb(history_slider, history_slider_event_cb, LV_EVENT_VALUE_CHANGED, NULL);
 }
 
 void setup() {
@@ -987,12 +967,10 @@ void setup() {
         forecastData[i].symbolToText = "Sunny";
     }
     
-    /*
-    // Initialize historical data - COMMENTED OUT
+    // Initialize historical data
     for (int i = 0; i < HISTORICAL_DATA_POINTS; i++) {
         historicalData[i] = 0.0;
     }
-    */
     
     // Connect to WiFi
     Serial.println("Connecting to WiFi...");
@@ -1019,13 +997,13 @@ void setup() {
     // Try to load from flash first
     Serial.println("Loading data from flash...");
     bool loadedWeather = load_weather_from_flash();
-    // bool loadedHistorical = load_historical_from_flash(); // COMMENTED OUT
+    bool loadedHistorical = load_historical_from_flash();
     
     // If no flash data or WiFi is connected, fetch fresh data
-    if (WiFi.status() == WL_CONNECTED && (!loadedWeather /* || !loadedHistorical */)) {
+    if (WiFi.status() == WL_CONNECTED && (!loadedWeather || !loadedHistorical)) {
         Serial.println("Fetching fresh data...");
         if (!loadedWeather) fetch_weather_data();
-        // if (!loadedHistorical) fetch_historical_data(); // COMMENTED OUT
+        if (!loadedHistorical) fetch_historical_data();
     }
     
     Serial.println("Setup completed");
@@ -1044,7 +1022,7 @@ void loop() {
     if (WiFi.status() == WL_CONNECTED && millis() - lastUpdate > 1800000) {
         Serial.println("Updating data...");
         fetch_weather_data();
-        // fetch_historical_data(); // COMMENTED OUT
+        fetch_historical_data();
         lastUpdate = millis();
     }
     
