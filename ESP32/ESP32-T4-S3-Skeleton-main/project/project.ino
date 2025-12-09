@@ -1,3 +1,6 @@
+// project_weather_station_complete.ino
+// Complete weather station with: Forecast, History, Settings and automatic timestamps
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -8,22 +11,19 @@
 #include <LV_Helper.h>
 #include <lvgl.h>
 #include <map>
-#include <SPIFFS.h>
-#include <FS.h>
-#include "esp_task_wdt.h"
+#include <Preferences.h>
+#include <algorithm>
+#include <array>
+#include <math.h>
+#include <string.h>
 
-// Wi-Fi credentials
-static const char* WIFI_SSID     = "xxx";
-static const char* WIFI_PASSWORD = "xxx";
+// WiFi credentials
+static const char* WIFI_SSID = "XXX";
+static const char* WIFI_PASSWORD = "XXX";
 
 LilyGo_Class amoled;
 
-// Flash storage files
-static const char* WEATHER_FILE = "/weather.json";
-static const char* HISTORICAL_FILE = "/historical.json";
-static const char* SETTINGS_FILE = "/settings.json";  // NEW: Settings file
-
-// Global UI variables
+// UI global variables
 static lv_obj_t* tileview;
 static lv_obj_t* start_tile;
 static lv_obj_t* forecast_tile;
@@ -33,8 +33,6 @@ static lv_obj_t* settings_tile;
 // Object IDs for event handling
 enum ObjectID {
     OBJ_NONE,
-    OBJ_START_WIFI_LABEL,
-    OBJ_START_MEM_LABEL,
     OBJ_FORECAST_TITLE,
     OBJ_FORECAST_DAY_0,
     OBJ_FORECAST_DAY_1,
@@ -43,96 +41,81 @@ enum ObjectID {
     OBJ_FORECAST_DAY_4,
     OBJ_FORECAST_DAY_5,
     OBJ_FORECAST_DAY_6,
-    OBJ_HISTORY_TITLE,
-    OBJ_HISTORY_CURRENT_VALUE,
-    OBJ_HISTORY_CHART,
-    OBJ_HISTORY_MIN_LABEL,
-    OBJ_HISTORY_MAX_LABEL,
-    OBJ_HISTORY_UNIT_LABEL,
-    OBJ_HISTORY_SLIDER,
-    OBJ_HISTORY_POINTS_LABEL,
-    OBJ_SETTINGS_CITY_DROPDOWN,
-    OBJ_SETTINGS_PARAM_DROPDOWN,
-    OBJ_SETTINGS_RESET_BTN,
-    OBJ_SETTINGS_SET_DEFAULT_BTN,  // NEW: Set as default button
-    OBJ_SETTINGS_FACTORY_BTN,
-    OBJ_COUNT
 };
 
-// UI Objects structure
+// UI object structure for forecast display
 struct UIObjects {
-    lv_obj_t* start_wifi_label;
-    lv_obj_t* start_mem_label;
     lv_obj_t* forecast_title;
     struct {
         lv_obj_t* container;
-        lv_obj_t* day_label;
+        lv_obj_t* day_label;       // Day of month (e.g., "9")
+        lv_obj_t* date_label;      // Weekday + full date (e.g., "Tue 2025-12-09")
         lv_obj_t* icon;
         lv_obj_t* temp_label;
-        lv_obj_t* condition_label;
+        lv_obj_t* condition_label; // Text description (e.g., "Sunny")
     } forecast_days[7];
-    lv_obj_t* history_title;
-    lv_obj_t* history_current_value;
-    lv_obj_t* history_chart;
-    lv_chart_series_t* history_series;
-    lv_obj_t* history_min_label;
-    lv_obj_t* history_max_label;
-    lv_obj_t* history_unit_label;
-    lv_obj_t* history_slider;
-    lv_obj_t* history_points_label;
-    lv_obj_t* settings_city_dropdown;
-    lv_obj_t* settings_param_dropdown;
-    lv_obj_t* settings_reset_btn;
-    lv_obj_t* settings_set_default_btn;  // NEW: Set as default button
-    lv_obj_t* settings_factory_btn;
 };
 
 static UIObjects ui_objs = {};
 
-// Historical data structure
-struct HistoricalDataPoint {
-    unsigned long timestamp;
-    float value;
-    char quality[2];
-};
+// History chart variables
+static lv_obj_t* history_chart;
+static lv_chart_series_t* temp_series = nullptr;
+static lv_obj_t* history_slider;
 
-// Variables for historical data
-static const int HISTORICAL_DATA_POINTS = 500;
-static HistoricalDataPoint* historicalData = nullptr;
+static const int HISTORICAL_DATA_POINTS = 720;
+static float historicalData[HISTORICAL_DATA_POINTS];
+static char historicalTime[HISTORICAL_DATA_POINTS][20]; // "MM-DD HH:MM" format
+
 static int currentDataPoints = 0;
-static int sliderOffset = 100;  // CHANGED: Start at 100 (latest data)
-static const int CHART_POINTS = 50;
+static int sliderOffset = 0;
+static const int CHART_POINTS = 60;
 
-// Variables for default values for settings
+// Axis labels
+static lv_obj_t* y_axis_labels[5];
+static lv_obj_t* x_date_labels[5];
+static lv_obj_t* axis_title_label = nullptr;
+
+// Default settings
 static const int DEFAULT_CITY_INDEX = 0;
 static const int DEFAULT_PARAMETER_INDEX = 0;
-static const int PARAMETER_CODES[] = {1, 6, 4, 9};
+static const int PARAMETER_CODES[] = { 1, 6, 4, 9 };
 
-// Global variables for settings
 static char selectedCity[40] = "Karlskrona";
-static int selectedCityIndex = 0;  
-static int selectedParameter = 1;
-static bool isSwitchingCity = false;
+static int selectedCityIndex = DEFAULT_CITY_INDEX;
+static int selectedParameter = PARAMETER_CODES[DEFAULT_PARAMETER_INDEX];
 
-// NEW: Flag to track if defaults have been loaded
-static bool defaultsLoaded = false;
+static lv_obj_t* city_dropdown;
+static lv_obj_t* param_dropdown;
 
-// Weather data variables
+// Settings saved in flash memory
+Preferences preferences;
+static const char* PREF_NAMESPACE = "weatherapp";
+static const char* PREF_CITY = "city_index";
+static const char* PREF_PARAM = "param_index";
+
+// Forecast data structures
 struct WeatherDay {
-    char date[20];
+    char date[20];           // Format: "YYYY-MM-DD"
+    int day_of_month;        // 9, 10, 11, etc.
     float temperature;
     int symbol_code;
-    const char* symbolToText;
+    const char* condition;
 };
+WeatherDay forecastData[7];
 
+// Date array for next 7 days
+static char date_array[7][12]; // "YYYY-MM-DD" format
+
+// Weather icons
 extern "C" {
-    #include "icons/Cloudy.h"
-    #include "icons/Lightning.h"
-    #include "icons/Rainy.h"
-    #include "icons/SnowAndRain.h"
-    #include "icons/Snowy.h"
-    #include "icons/Sunny.h"
-    #include "icons/SunnyCloud.h"
+#include "icons/Cloudy.h"
+#include "icons/Lightning.h"
+#include "icons/Rainy.h"
+#include "icons/SnowAndRain.h"
+#include "icons/Snowy.h"
+#include "icons/Sunny.h"
+#include "icons/SunnyCloud.h"
 }
 
 const lv_img_dsc_t* weather_icons[] = {
@@ -145,352 +128,559 @@ const lv_img_dsc_t* weather_icons[] = {
     &SunnyCloud
 };
 
-// Map for city data
+// Weather station coordinates and IDs
 std::map<std::string, std::array<double, 3>> WeatherStation{
-  {"Stockholm", {97400, 59.6269, 17.9545}},
-  {"Karlskrona", {65090, 56.1500, 15.5890}},
-  {"Göteborg", {72420, 57.6996, 11.9673}},
-  {"Malmö", {53300, 55.6100, 13.0715}},
-  {"Kiruna", {180940, 67.8500, 20.2333}}
+    {"Karlskrona", {65090, 56.1500, 15.5890}},
+    {"Stockholm",  {97400, 59.6269, 17.9545}},
+    {"Goteborg",   {72420, 57.6996, 11.9673}},
+    {"Malmo",      {53300, 55.6100, 13.0715}},
+    {"Kiruna",     {180940, 67.8500, 20.2333}}
 };
 
-// Map for forecast API URLs
+// Forecast API URLs for each city
 std::map<std::string, String> ForecastAPI{
     {"Stockholm", "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/17.9545/lat/59.6269/data.json?parameters=air_temperature,symbol_code"},
     {"Karlskrona", "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/15.5890/lat/56.1500/data.json?parameters=air_temperature,symbol_code"},
-    {"Göteborg", "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/11.9673/lat/57.6996/data.json?parameters=air_temperature,symbol_code"},
-    {"Malmö", "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/13.0715/lat/55.6100/data.json?parameters=air_temperature,symbol_code"},
+    {"Goteborg", "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/11.9673/lat/57.6996/data.json?parameters=air_temperature,symbol_code"},
+    {"Malmo", "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/13.0715/lat/55.6100/data.json?parameters=air_temperature,symbol_code"},
     {"Kiruna", "https://opendata-download-metfcst.smhi.se/api/category/snow1g/version/1/geotype/point/lon/20.2333/lat/67.8500/data.json?parameters=air_temperature,symbol_code"},
 };
 
-WeatherDay forecastData[7];
+// JSON buffer sizes
+static const size_t FORECAST_JSON_BUFFER = 48 * 1024;
+static const size_t HISTORICAL_JSON_BUFFER = 32 * 1024;
+
+// NTP server for time synchronization
+static const char* NTP_SERVER = "pool.ntp.org";
+static const long GMT_OFFSET_SEC = 3600;  // GMT+1 for Sweden
+static const int DAYLIGHT_OFFSET_SEC = 3600; // Daylight saving time
 
 // ============================================================================
 // FUNCTION DECLARATIONS
 // ============================================================================
 
+// Date and time functions
+static void init_time();
+static void get_current_date(char* buffer, size_t buffer_size);
+static void add_days_to_date(const char* start_date, int days_to_add, char* result, size_t result_size);
+static int get_day_of_month(const char* date);
+static const char* get_weekday_name(const char* date);
+static void generate_date_array();
+static void check_and_refresh_dates();
+static void sync_time();
+static void generate_timestamp(int pointIndex, int totalPoints, char* outbuf, size_t len);
+
 // Utility functions
+static int safe_map(int x, int in_min, int in_max, int out_min, int out_max);
 static const char* symbolToText(int code);
-static const char* getWeekday(const char* isoDate);
 static const lv_img_dsc_t* getWeatherIcon(int code);
-static void update_all_objects();
 
-// SPIFFS functions
-static bool init_spiffs();
-static bool init_historical_data();
-
-// NEW: Settings management functions
-static void save_settings_to_flash();
-static bool load_settings_from_flash();
-
-static void save_weather_to_flash();
-static bool load_weather_from_flash();
-static void save_historical_to_flash();
-static bool load_historical_from_flash();
-
-// WiFi functions
-static void ensure_wifi_connection();
+// UI update functions
+static void update_selected_city_name();
+static void update_forecast_title();
+static void update_forecast_display();
+static void update_history_axis_and_xlabels(int pointsToShow, int startIndex);
+static void compute_and_set_dynamic_y_range(int startIndex, int pointsToShow);
+static const char* parameterAxisTitle(int paramCode);
 
 // Data fetching functions
+static void ensure_wifi_connection();
 static void fetch_weather_data();
 static void fetch_historical_data();
 
-// LVGL event callback
-static void ui_event_cb(lv_event_t* e);
-
-// Screen creation functions
+// UI creation functions
 static void create_start_screen(lv_obj_t* parent);
 static void create_forecast_screen(lv_obj_t* parent);
 static void create_history_screen(lv_obj_t* parent);
 static void create_settings_screen(lv_obj_t* parent);
-
-// UI functions
 static void create_ui();
 
+// Event handlers
+static void ui_event_cb(lv_event_t* e);
+
+// System functions
+static void load_saved_defaults();
+static void connect_wifi();
+
 // ============================================================================
-// END OF FUNCTION DECLARATIONS
+// FUNCTION DEFINITIONS
 // ============================================================================
 
-// Convert SMHI symbol code to text description
+/**
+ * Maps a value from one range to another
+ * @param x Input value to map
+ * @param in_min Minimum of input range
+ * @param in_max Maximum of input range
+ * @param out_min Minimum of output range
+ * @param out_max Maximum of output range
+ * @return Mapped value
+ */
+static int safe_map(int x, int in_min, int in_max, int out_min, int out_max) {
+    if (in_max == in_min) return out_min;
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+/**
+ * Converts SMHI symbol code to human-readable text
+ * @param code SMHI weather symbol code (1-27)
+ * @return Text description of weather condition
+ */
 static const char* symbolToText(int code) {
     switch (code) {
         case 1: return "Sunny";
-        case 2: return "SunnyCloud";
-        case 3: return "Cloudy";
-        case 4: return "SunnyCloud";
+        case 2: return "Partly cloudy";
+        case 3: return "Partly cloudy";
+        case 4: return "Cloudy";
         case 5: return "Cloudy";
-        case 6: return "Cloudy";
-        case 7: return "Cloudy";
-        case 8: return "Rainy";
-        case 9: return "Rainy";
-        case 10: return "Rainy";
-        case 11: return "Lightning";
-        case 12: return "SnowAndRain";
-        case 13: return "SnowAndRain";
-        case 14: return "SnowAndRain";
-        case 15: return "Snowy";
-        case 16: return "Snowy";
-        case 17: return "Snowy";
-        case 18: return "Rainy";
-        case 19: return "Rainy";
-        case 20: return "Rainy";
-        case 21: return "Lightning";
-        case 22: return "SnowAndRain";
-        case 23: return "SnowAndRain";
-        case 24: return "SnowAndRain";
-        case 25: return "Snowy";
-        case 26: return "Snowy";
-        case 27: return "Snowy";
-        default: return "Sunny";
+        case 6: return "Overcast";
+        case 7: return "Fog";
+        case 8: return "Rain showers";
+        case 9: return "Rain showers";
+        case 10: return "Rain showers";
+        case 11: return "Thunderstorm";
+        case 12: return "Sleet showers";
+        case 13: return "Sleet showers";
+        case 14: return "Sleet showers";
+        case 15: return "Snow showers";
+        case 16: return "Snow showers";
+        case 17: return "Snow showers";
+        case 18: return "Rain";
+        case 19: return "Rain";
+        case 20: return "Rain";
+        case 21: return "Thunder";
+        case 22: return "Sleet";
+        case 23: return "Sleet";
+        case 24: return "Sleet";
+        case 25: return "Snow";
+        case 26: return "Snow";
+        case 27: return "Snow";
+        default: return "Clear";
     }
 }
 
-// Get weather icon based on symbol code
+/**
+ * Returns appropriate weather icon based on symbol code
+ * @param code SMHI weather symbol code
+ * @return Pointer to LVGL image descriptor
+ */
 static const lv_img_dsc_t* getWeatherIcon(int code) {
     const char* symbol = symbolToText(code);
     
-    if (strcmp(symbol, "Sunny") == 0) return &Sunny;
-    if (strcmp(symbol, "SunnyCloud") == 0) return &SunnyCloud;
-    if (strcmp(symbol, "Cloudy") == 0) return &Cloudy;
-    if (strcmp(symbol, "Rainy") == 0) return &Rainy;
-    if (strcmp(symbol, "Lightning") == 0) return &Lightning;
-    if (strcmp(symbol, "SnowAndRain") == 0) return &SnowAndRain;
-    if (strcmp(symbol, "Snowy") == 0) return &Snowy;
+    if (strstr(symbol, "Sunny") != NULL || strstr(symbol, "Clear") != NULL) return &Sunny;
+    if (strstr(symbol, "Partly") != NULL || strstr(symbol, "Cloudy") != NULL) return &SunnyCloud;
+    if (strstr(symbol, "Overcast") != NULL || strstr(symbol, "Fog") != NULL) return &Cloudy;
+    if (strstr(symbol, "Rain") != NULL) return &Rainy;
+    if (strstr(symbol, "Thunder") != NULL) return &Lightning;
+    if (strstr(symbol, "Sleet") != NULL) return &SnowAndRain;
+    if (strstr(symbol, "Snow") != NULL) return &Snowy;
     
     return &Sunny;
 }
 
-// Convert date to weekday
-static const char* getWeekday(const char* isoDate) {
-    if (isoDate[0] == '\0') return "---";
+/**
+ * Gets abbreviated weekday name from date string
+ * @param isoDate Date string in "YYYY-MM-DD" format
+ * @return 3-letter weekday abbreviation (e.g., "Mon")
+ */
+static const char* get_weekday_name(const char* isoDate) {
+    if (!isoDate || strlen(isoDate) < 10) return "";
     
-    struct tm t = {};
-    sscanf(isoDate, "%d-%d-%d", &t.tm_year, &t.tm_mon, &t.tm_mday);
-    t.tm_year -= 1900;
-    t.tm_mon -= 1;
+    int y, m, d;
+    if (sscanf(isoDate, "%d-%d-%d", &y, &m, &d) != 3) return "";
     
-    time_t time = mktime(&t);
-    if (time == -1) return "---";
+    struct tm tm_date = {};
+    tm_date.tm_year = y - 1900;
+    tm_date.tm_mon = m - 1;
+    tm_date.tm_mday = d;
+    tm_date.tm_hour = 12;
+    
+    time_t t = mktime(&tm_date);
+    if (t == -1) return "";
+    
+    struct tm* lt = localtime(&t);
+    if (!lt) return "";
     
     static const char* names[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-    int wday = t.tm_wday;
-    if (wday < 0 || wday > 6) return "---";
-    
-    return names[wday];
+    return names[lt->tm_wday];
 }
 
-// Initialize SPIFFS
-static bool init_spiffs() {
-    if (!SPIFFS.begin(true)) {
-        if (!SPIFFS.format()) {
-            return false;
-        }
-        
-        if (!SPIFFS.begin(true)) {
-            return false;
-        }
+/**
+ * Updates the selected city name based on index
+ */
+static void update_selected_city_name() {
+    switch (selectedCityIndex) {
+        case 0: strcpy(selectedCity, "Karlskrona"); break;
+        case 1: strcpy(selectedCity, "Stockholm"); break;
+        case 2: strcpy(selectedCity, "Goteborg"); break;
+        case 3: strcpy(selectedCity, "Malmo"); break;
+        case 4: strcpy(selectedCity, "Kiruna"); break;
+        default: strcpy(selectedCity, "Karlskrona"); break;
     }
-    
-    return true;
 }
 
-// Initialize historical data buffer
-static bool init_historical_data() {
-    #ifdef BOARD_HAS_PSRAM
-        historicalData = (HistoricalDataPoint*)ps_malloc(HISTORICAL_DATA_POINTS * sizeof(HistoricalDataPoint));
-    #endif
-    
-    if (!historicalData) {
-        historicalData = (HistoricalDataPoint*)malloc(HISTORICAL_DATA_POINTS * sizeof(HistoricalDataPoint));
-        if (!historicalData) {
-            return false;
-        }
-    }
-    
-    memset(historicalData, 0, HISTORICAL_DATA_POINTS * sizeof(HistoricalDataPoint));
-    currentDataPoints = 0;
-    return true;
+/**
+ * Updates the forecast title with current city
+ */
+static void update_forecast_title() {
+    char buf[64];
+    snprintf(buf, sizeof(buf), "7-Day Forecast - %s", selectedCity);
+    if (ui_objs.forecast_title) lv_label_set_text(ui_objs.forecast_title, buf);
 }
 
-// NEW: Save settings to flash
-static void save_settings_to_flash() {
-    File file = SPIFFS.open(SETTINGS_FILE, "w");
-    if (!file) {
-        Serial.println("Failed to open settings file for writing");
-        return;
+/**
+ * Returns axis title based on parameter code
+ * @param paramCode Parameter code (1, 6, 4, or 9)
+ * @return String with parameter name and unit
+ */
+static const char* parameterAxisTitle(int paramCode) {
+    switch (paramCode) {
+        case 1: return "Temperature (°C)";
+        case 6: return "Humidity (%)";
+        case 4: return "Wind speed (m/s)";
+        case 9: return "Air pressure (hPa)";
+        default: return "";
     }
+}
+
+/**
+ * Initializes time synchronization with NTP server
+ */
+static void init_time() {
+    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
     
-    JsonDocument doc;
-    doc["city"] = selectedCity;
-    doc["cityIndex"] = selectedCityIndex;
-    doc["parameter"] = selectedParameter;
+    int retries = 0;
+    while (time(nullptr) < 1000000000 && retries < 30) {
+        delay(1000);
+        retries++;
+    }
+}
+
+/**
+ * Synchronizes time with NTP server (alternative method)
+ */
+static void sync_time() {
+    configTime(GMT_OFFSET_SEC, DAYLIGHT_OFFSET_SEC, NTP_SERVER);
     
-    if (serializeJson(doc, file) == 0) {
-        Serial.println("Failed to write settings to file");
+    struct tm timeinfo;
+    int retries = 0;
+    while (!getLocalTime(&timeinfo) && retries < 10) {
+        delay(500);
+        retries++;
+    }
+}
+
+/**
+ * Gets current date in YYYY-MM-DD format
+ * @param buffer Output buffer
+ * @param buffer_size Size of output buffer
+ */
+static void get_current_date(char* buffer, size_t buffer_size) {
+    time_t now = time(nullptr);
+    struct tm* timeinfo = localtime(&now);
+    
+    if (timeinfo && now > 1000000000) {
+        strftime(buffer, buffer_size, "%Y-%m-%d", timeinfo);
     } else {
-        Serial.println("Settings saved successfully");
+        // Fallback to compile date
+        strncpy(buffer, __DATE__, buffer_size);
+        char month[4];
+        int day, year;
+        sscanf(__DATE__, "%s %d %d", month, &day, &year);
+        
+        const char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+                                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+        int month_num = 1;
+        for (int i = 0; i < 12; i++) {
+            if (strcmp(month, months[i]) == 0) {
+                month_num = i + 1;
+                break;
+            }
+        }
+        
+        snprintf(buffer, buffer_size, "%04d-%02d-%02d", year, month_num, day);
     }
-    
-    file.close();
 }
 
-// NEW: Load settings from flash
-static bool load_settings_from_flash() {
-    File file = SPIFFS.open(SETTINGS_FILE, "r");
-    if (!file || file.size() == 0) {
-        Serial.println("No saved settings found, using defaults");
-        return false;
-    }
-    
-    JsonDocument doc;
-    DeserializationError error = deserializeJson(doc, file);
-    file.close();
-    
-    if (error) {
-        Serial.print("Failed to parse settings: ");
-        Serial.println(error.c_str());
-        return false;
-    }
-    
-    const char* savedCity = doc["city"];
-    int savedCityIndex = doc["cityIndex"];
-    int savedParameter = doc["parameter"];
-    
-    if (savedCity) {
-        strncpy(selectedCity, savedCity, sizeof(selectedCity) - 1);
-        selectedCity[sizeof(selectedCity) - 1] = '\0';
-    }
-    
-    selectedCityIndex = savedCityIndex;
-    selectedParameter = savedParameter;
-    
-    Serial.printf("Loaded settings: City=%s, CityIndex=%d, Parameter=%d\n", 
-                  selectedCity, selectedCityIndex, selectedParameter);
-    
-    return true;
-}
-
-// Save weather data to flash
-static void save_weather_to_flash() {
-    File file = SPIFFS.open(WEATHER_FILE, "w");
-    if (!file) {
+/**
+ * Adds specified number of days to a date
+ * @param start_date Starting date in YYYY-MM-DD format
+ * @param days_to_add Number of days to add
+ * @param result Output buffer for result
+ * @param result_size Size of output buffer
+ */
+static void add_days_to_date(const char* start_date, int days_to_add, char* result, size_t result_size) {
+    int year, month, day;
+    if (sscanf(start_date, "%d-%d-%d", &year, &month, &day) != 3) {
+        snprintf(result, result_size, "0000-00-00");
         return;
     }
     
-    char buffer[100];
-    for (int i = 0; i < 7; i++) {
-        snprintf(buffer, sizeof(buffer), "%s,%.1f,%d\n", 
-                 forecastData[i].date, 
-                 forecastData[i].temperature,
-                 forecastData[i].symbol_code);
-        file.write((uint8_t*)buffer, strlen(buffer));
+    struct tm tm_date = {};
+    tm_date.tm_year = year - 1900;
+    tm_date.tm_mon = month - 1;
+    tm_date.tm_mday = day;
+    tm_date.tm_hour = 12;
+    tm_date.tm_min = 0;
+    tm_date.tm_sec = 0;
+    
+    time_t time_value = mktime(&tm_date);
+    if (time_value == -1) {
+        snprintf(result, result_size, "0000-00-00");
+        return;
     }
     
-    file.close();
+    time_value += days_to_add * 86400;
+    
+    struct tm* new_tm = localtime(&time_value);
+    if (new_tm == NULL) {
+        snprintf(result, result_size, "0000-00-00");
+        return;
+    }
+    
+    strftime(result, result_size, "%Y-%m-%d", new_tm);
 }
 
-// Load weather data from flash
-static bool load_weather_from_flash() {
-    File file = SPIFFS.open(WEATHER_FILE, "r");
-    if (!file || file.size() == 0) {
-        return false;
-    }
+/**
+ * Extracts day of month from date string
+ * @param date Date string in YYYY-MM-DD format
+ * @return Day of month (1-31)
+ */
+static int get_day_of_month(const char* date) {
+    if (date == NULL || strlen(date) < 10) return 0;
     
-    int i = 0;
-    while (file.available() && i < 7) {
-        String line = file.readStringUntil('\n');
-        int comma1 = line.indexOf(',');
-        int comma2 = line.indexOf(',', comma1 + 1);
+    int day = (date[8] - '0') * 10 + (date[9] - '0');
+    return day;
+}
+
+/**
+ * Generates array of next 7 dates starting from today
+ */
+static void generate_date_array() {
+    char current_date[12];
+    get_current_date(current_date, sizeof(current_date));
+    
+    for (int i = 0; i < 7; i++) {
+        add_days_to_date(current_date, i, date_array[i], sizeof(date_array[i]));
+    }
+}
+
+/**
+ * Checks if date has changed and refreshes data if needed
+ */
+static void check_and_refresh_dates() {
+    static char last_known_date[12] = "";
+    char current_date[12];
+    
+    get_current_date(current_date, sizeof(current_date));
+    
+    if (strcmp(last_known_date, current_date) != 0) {
+        generate_date_array();
         
-        if (comma1 > 0 && comma2 > 0) {
-            String dateStr = line.substring(0, comma1);
-            String tempStr = line.substring(comma1 + 1, comma2);
-            String codeStr = line.substring(comma2 + 1);
-            
-            strncpy(forecastData[i].date, dateStr.c_str(), sizeof(forecastData[i].date) - 1);
+        for (int i = 0; i < 7; i++) {
+            strncpy(forecastData[i].date, date_array[i], sizeof(forecastData[i].date) - 1);
             forecastData[i].date[sizeof(forecastData[i].date) - 1] = '\0';
-            forecastData[i].temperature = tempStr.toFloat();
-            forecastData[i].symbol_code = codeStr.toInt();
-            forecastData[i].symbolToText = symbolToText(forecastData[i].symbol_code);
-            i++;
+            forecastData[i].day_of_month = get_day_of_month(date_array[i]);
+        }
+        
+        update_forecast_display();
+        fetch_weather_data();
+        
+        strncpy(last_known_date, current_date, sizeof(last_known_date));
+    }
+}
+
+/**
+ * Generates timestamp for historical data point
+ * @param pointIndex Index of data point
+ * @param totalPoints Total number of data points
+ * @param outbuf Output buffer for timestamp
+ * @param len Length of output buffer
+ */
+static void generate_timestamp(int pointIndex, int totalPoints, char* outbuf, size_t len) {
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo)) {
+        snprintf(outbuf, len, "??-??");
+        return;
+    }
+
+    time_t now = time(nullptr);
+    int hoursBack = totalPoints - pointIndex - 1;
+    time_t dataTime = now - (hoursBack * 3600);
+
+    struct tm* dataTimeInfo = localtime(&dataTime);
+    snprintf(outbuf, len, "%02d-%02d %02d:%02d",
+        dataTimeInfo->tm_mon + 1,
+        dataTimeInfo->tm_mday,
+        dataTimeInfo->tm_hour,
+        dataTimeInfo->tm_min);
+}
+
+/**
+ * Computes and sets dynamic Y-axis range for chart
+ * @param startIndex Starting index of data to display
+ * @param pointsToShow Number of points to display
+ */
+static void compute_and_set_dynamic_y_range(int startIndex, int pointsToShow) {
+    if (!history_chart) return;
+    
+    int endIndex = startIndex + pointsToShow - 1;
+    endIndex = min(endIndex, currentDataPoints - 1);
+    startIndex = max(0, startIndex);
+
+    float minv = INFINITY, maxv = -INFINITY;
+    for (int i = startIndex; i <= endIndex; i++) {
+        float v = historicalData[i];
+        if (isnan(v)) continue;
+        if (v < minv) minv = v;
+        if (v > maxv) maxv = v;
+    }
+
+    if (minv == INFINITY || maxv == -INFINITY) {
+        if (selectedParameter == 1) { minv = -20; maxv = 40; }
+        else if (selectedParameter == 6) { minv = 0; maxv = 100; }
+        else if (selectedParameter == 4) { minv = 0; maxv = 30; }
+        else if (selectedParameter == 9) { minv = 950; maxv = 1050; }
+        else { minv = -100; maxv = 200; }
+    } else {
+        float span = maxv - minv;
+        float margin = (span <= 0.0f) ? 1.0f : (span * 0.12f);
+        minv -= margin;
+        maxv += margin;
+        if (selectedParameter == 6) { 
+            if (minv < 0) minv = 0; 
+            if (maxv > 100) maxv = 100; 
+        }
+        if (selectedParameter == 9) { 
+            if (minv < 900) minv = 900; 
+            if (maxv > 1100) maxv = 1100; 
         }
     }
-    
-    file.close();
-    return i > 0;
+
+    int ymin = floor(minv);
+    int ymax = ceil(maxv);
+    lv_chart_set_range(history_chart, LV_CHART_AXIS_PRIMARY_Y, ymin, ymax);
+
+    if (axis_title_label) lv_label_set_text(axis_title_label, parameterAxisTitle(selectedParameter));
 }
 
-// Save historical data to flash
-static void save_historical_to_flash() {
-    if (currentDataPoints == 0 || !historicalData) {
+/**
+ * Updates history chart axis labels and X-axis dates
+ * @param pointsToShow Number of points currently displayed
+ * @param startIndex Starting index of displayed data
+ */
+static void update_history_axis_and_xlabels(int pointsToShow, int startIndex) {
+    if (!history_chart) return;
+    
+    int endIndex = startIndex + pointsToShow - 1;
+    endIndex = min(endIndex, currentDataPoints - 1);
+    startIndex = max(0, startIndex);
+
+    // Update Y-axis labels
+    float minv = INFINITY, maxv = -INFINITY;
+    for (int i = startIndex; i <= endIndex; i++) {
+        float v = historicalData[i];
+        if (isnan(v)) continue;
+        if (v < minv) minv = v;
+        if (v > maxv) maxv = v;
+    }
+    
+    if (minv == INFINITY || maxv == -INFINITY) {
+        if (selectedParameter == 1) { minv = -20; maxv = 40; }
+        else if (selectedParameter == 6) { minv = 0; maxv = 100; }
+        else if (selectedParameter == 4) { minv = 0; maxv = 30; }
+        else if (selectedParameter == 9) { minv = 950; maxv = 1050; }
+        else { minv = -100; maxv = 200; }
+    }
+    
+    float span = maxv - minv;
+    float margin = (span <= 0.0f) ? 1.0f : (span * 0.12f);
+    minv -= margin;
+    maxv += margin;
+    float step = (maxv - minv) / 4.0f;
+
+    for (int i = 0; i < 5; i++) {
+        if (y_axis_labels[i]) {
+            float v = minv + step * (4 - i);
+            char buf[20];
+            if (selectedParameter == 6) {
+                snprintf(buf, sizeof(buf), "%.0f", v);
+            } else {
+                snprintf(buf, sizeof(buf), "%.1f", v);
+            }
+            lv_label_set_text(y_axis_labels[i], buf);
+        }
+    }
+
+    // Update X-axis labels
+    if (currentDataPoints <= 0) {
+        for (int i = 0; i < 5; i++) {
+            if (x_date_labels[i]) lv_label_set_text(x_date_labels[i], "-");
+        }
         return;
     }
-    
-    File file = SPIFFS.open(HISTORICAL_FILE, "w");
-    if (!file) {
+
+    int visible = pointsToShow;
+    if (visible <= 0) visible = 1;
+    int stepIdx = max(1, visible / 4);
+
+    for (int i = 0; i < 5; i++) {
+        int idx = startIndex + i * stepIdx;
+        if (idx >= currentDataPoints) idx = currentDataPoints - 1;
+        if (idx < 0) idx = 0;
+
+        const char* tstr = historicalTime[idx];
+        char buf[16];
+
+        if (tstr && strlen(tstr) >= 5) {
+            char mmdd[6] = { 0 };
+            strncpy(mmdd, tstr, 5);
+            snprintf(buf, sizeof(buf), "%s", mmdd);
+        } else {
+            snprintf(buf, sizeof(buf), "?");
+        }
+
+        if (x_date_labels[i]) {
+            lv_label_set_text(x_date_labels[i], buf);
+        }
+    }
+}
+
+/**
+ * LVGL event callback for UI objects
+ * @param e LVGL event structure
+ */
+static void ui_event_cb(lv_event_t* e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_obj_t* obj = lv_event_get_target(e);
+    ObjectID id = (ObjectID)(uintptr_t)lv_obj_get_user_data(obj);
+
+    if (code == LV_EVENT_DELETE) {
+        switch (id) {
+            case OBJ_FORECAST_TITLE: 
+                ui_objs.forecast_title = nullptr; 
+                break;
+            default: 
+                break;
+        }
+
+        for (int i = 0; i < 7; i++) {
+            if (id == (ObjectID)(OBJ_FORECAST_DAY_0 + i)) {
+                ui_objs.forecast_days[i].container = nullptr;
+                ui_objs.forecast_days[i].day_label = nullptr;
+                ui_objs.forecast_days[i].date_label = nullptr;
+                ui_objs.forecast_days[i].icon = nullptr;
+                ui_objs.forecast_days[i].temp_label = nullptr;
+                ui_objs.forecast_days[i].condition_label = nullptr;
+                break;
+            }
+        }
         return;
     }
-    
-    char header[100];
-    snprintf(header, sizeof(header), "CITY:%s\nPARAM:%d\nPOINTS:%d\nDATA_START\n", 
-             selectedCity, selectedParameter, currentDataPoints);
-    file.write((uint8_t*)header, strlen(header));
-    
-    size_t bytesToWrite = currentDataPoints * sizeof(HistoricalDataPoint);
-    file.write((uint8_t*)historicalData, bytesToWrite);
-    
-    file.close();
 }
 
-// Load historical data from flash
-static bool load_historical_from_flash() {
-    File file = SPIFFS.open(HISTORICAL_FILE, "r");
-    if (!file || file.size() == 0) {
-        return false;
-    }
-    
-    String cityLine = file.readStringUntil('\n');
-    String paramLine = file.readStringUntil('\n');
-    String pointsLine = file.readStringUntil('\n');
-    String dataStartLine = file.readStringUntil('\n');
-    
-    if (!cityLine.startsWith("CITY:") || !dataStartLine.startsWith("DATA_START")) {
-        file.close();
-        return false;
-    }
-    
-    String savedCity = cityLine.substring(5);
-    savedCity.trim();
-    int savedParam = paramLine.substring(6).toInt();
-    currentDataPoints = pointsLine.substring(7).toInt();
-    
-    if (savedCity != selectedCity || savedParam != selectedParameter) {
-        file.close();
-        return false;
-    }
-    
-    if (!historicalData && !init_historical_data()) {
-        file.close();
-        return false;
-    }
-    
-    if (currentDataPoints > HISTORICAL_DATA_POINTS) {
-        currentDataPoints = HISTORICAL_DATA_POINTS;
-    }
-    
-    size_t bytesToRead = currentDataPoints * sizeof(HistoricalDataPoint);
-    if (bytesToRead > file.available()) {
-        file.close();
-        return false;
-    }
-    
-    size_t bytesRead = file.read((uint8_t*)historicalData, bytesToRead);
-    file.close();
-    
-    return bytesRead == bytesToRead;
-}
-
-// Ensure WiFi connection
+/**
+ * Ensures WiFi connection is active, reconnects if needed
+ */
 static void ensure_wifi_connection() {
     if (WiFi.status() != WL_CONNECTED) {
         WiFi.disconnect();
@@ -501,1051 +691,752 @@ static void ensure_wifi_connection() {
         while (WiFi.status() != WL_CONNECTED && retries < 30) {
             delay(500);
             retries++;
-            esp_task_wdt_reset();
         }
     }
 }
 
-// Fetch weather data - FIXED: Direct numeric symbol code parsing
+/**
+ * Fetches 7-day weather forecast data from SMHI API
+ */
 static void fetch_weather_data() {
     ensure_wifi_connection();
     
     if (WiFi.status() != WL_CONNECTED) {
-        load_weather_from_flash();
-        update_all_objects();
         return;
     }
 
-    HTTPClient http;
+    generate_date_array();
     
+    HTTPClient http;
+
     if (ForecastAPI.find(selectedCity) == ForecastAPI.end()) {
         return;
     }
-    
+
     String forecastURL = ForecastAPI[selectedCity];
-    
     http.begin(forecastURL);
     http.setTimeout(10000);
 
-    esp_task_wdt_reset();
-    
     int httpCode = http.GET();
     if (httpCode != HTTP_CODE_OK) {
         http.end();
-        load_weather_from_flash();
-        update_all_objects();
         return;
     }
 
     String payload = http.getString();
     http.end();
     
-    JsonDocument doc;
+    DynamicJsonDocument doc(FORECAST_JSON_BUFFER);
     DeserializationError error = deserializeJson(doc, payload);
-    
-    if (error) {
-        load_weather_from_flash();
-        update_all_objects();
+
+    if (error || !doc.containsKey("timeSeries")) {
         return;
     }
-    
+
     JsonArray timeSeries = doc["timeSeries"].as<JsonArray>();
     
+    // Initialize forecast data with date array
     for (int i = 0; i < 7; i++) {
-        forecastData[i].date[0] = '\0';
-        forecastData[i].temperature = 0;
+        strncpy(forecastData[i].date, date_array[i], sizeof(forecastData[i].date) - 1);
+        forecastData[i].date[sizeof(forecastData[i].date) - 1] = '\0';
+        forecastData[i].day_of_month = get_day_of_month(date_array[i]);
+        forecastData[i].temperature = 0.0f;
         forecastData[i].symbol_code = 1;
-        forecastData[i].symbolToText = "Sunny";
+        forecastData[i].condition = "Sunny";
     }
     
-    int daysFound = 0;
-    String lastDate = "";
+    // Create map to store best data for each date
+    std::map<String, std::pair<float, int>> dateDataMap;
     
+    // Parse JSON and find best data for each date
     for (JsonVariant entryVariant : timeSeries) {
-        if (daysFound >= 7) break;
-        
         JsonObject entry = entryVariant.as<JsonObject>();
+        
+        if (!entry.containsKey("time") || !entry.containsKey("data")) {
+            continue;
+        }
+        
         const char* timeStr = entry["time"];
-        String currentDate = String(timeStr).substring(0, 10);
+        String jsonDate = String(timeStr).substring(0, 10);
         
-        // Try to get data around 12:00
-        String timePart = String(timeStr).substring(11, 16); // Get HH:MM
-        if (timePart >= "11:00" && timePart <= "13:00") {
-            if (currentDate != lastDate) {
-                lastDate = currentDate;
-                
-                strncpy(forecastData[daysFound].date, timeStr, 10);
-                forecastData[daysFound].date[10] = '\0';
-                
-                JsonArray parameters = entry["parameters"].as<JsonArray>();
-                for (JsonVariant param : parameters) {
-                    String paramName = param["name"].as<String>();
-                    if (paramName == "air_temperature") {
-                        forecastData[daysFound].temperature = param["values"][0];
-                    } else if (paramName == "symbol_code") {
-                        // FIXED: Direct numeric value - no string parsing needed
-                        forecastData[daysFound].symbol_code = param["values"][0].as<int>();
-                    }
-                }
-                
-                forecastData[daysFound].symbolToText = symbolToText(forecastData[daysFound].symbol_code);
-                daysFound++;
+        // Check if this date is in our 7-day window
+        bool date_in_range = false;
+        for (int i = 0; i < 7; i++) {
+            if (jsonDate == String(date_array[i])) {
+                date_in_range = true;
+                break;
+            }
+        }
+        
+        if (!date_in_range) {
+            continue;
+        }
+        
+        // Parse temperature and symbol data
+        JsonObject data = entry["data"];
+        float temp = 0.0f;
+        int symbol = 1;
+        
+        for (JsonPair kv : data) {
+            String key = kv.key().c_str();
+            if (key == "air_temperature") {
+                temp = kv.value().as<float>();
+            } else if (key == "symbol_code") {
+                symbol = kv.value().as<int>();
+            }
+        }
+        
+        // Calculate proximity to noon (12:00)
+        if (strlen(timeStr) > 10) {
+            String timePart = String(timeStr).substring(11, 16);
+            int hour = timePart.substring(0, 2).toInt();
+            int minute = timePart.substring(3, 5).toInt();
+            int minutesFromNoon = abs((hour - 12) * 60 + minute);
+            
+            // Use data closest to noon (within 3 hours)
+            if (dateDataMap.find(jsonDate) == dateDataMap.end() || 
+                minutesFromNoon < 180) {
+                dateDataMap[jsonDate] = std::make_pair(temp, symbol);
             }
         }
     }
     
-    // Fallback: if we didn't find 12:00 data, use first entry of each day
-    if (daysFound < 7) {
-        daysFound = 0;
-        lastDate = "";
+    // Map JSON data to forecast days
+    for (int i = 0; i < 7; i++) {
+        String dateStr = String(forecastData[i].date);
         
-        for (JsonVariant entryVariant : timeSeries) {
-            if (daysFound >= 7) break;
-            
-            JsonObject entry = entryVariant.as<JsonObject>();
-            const char* timeStr = entry["time"];
-            String currentDate = String(timeStr).substring(0, 10);
-            
-            if (currentDate != lastDate) {
-                lastDate = currentDate;
-                
-                strncpy(forecastData[daysFound].date, timeStr, 10);
-                forecastData[daysFound].date[10] = '\0';
-                
-                JsonArray parameters = entry["parameters"].as<JsonArray>();
-                for (JsonVariant param : parameters) {
-                    String paramName = param["name"].as<String>();
-                    if (paramName == "air_temperature") {
-                        forecastData[daysFound].temperature = param["values"][0];
-                    } else if (paramName == "symbol_code") {
-                        // FIXED: Direct numeric value - no string parsing needed
-                        forecastData[daysFound].symbol_code = param["values"][0].as<int>();
-                    }
-                }
-                
-                forecastData[daysFound].symbolToText = symbolToText(forecastData[daysFound].symbol_code);
-                daysFound++;
-            }
+        if (dateDataMap.find(dateStr) != dateDataMap.end()) {
+            forecastData[i].temperature = dateDataMap[dateStr].first;
+            forecastData[i].symbol_code = dateDataMap[dateStr].second;
+            forecastData[i].condition = symbolToText(forecastData[i].symbol_code);
         }
     }
     
-    update_all_objects();
-    save_weather_to_flash();
+    // Update UI with new data
+    update_forecast_display();
 }
 
-// Fetch historical data
+/**
+ * Updates forecast display with current data
+ */
+static void update_forecast_display() {
+    // Update forecast title
+    if (ui_objs.forecast_title) {
+        char title[50];
+        snprintf(title, sizeof(title), "7-Day Forecast - %s", selectedCity);
+        lv_label_set_text(ui_objs.forecast_title, title);
+    }
+
+    // Update each forecast day
+    for (int i = 0; i < 7; i++) {
+        // Update day of month label
+        if (ui_objs.forecast_days[i].day_label) {
+            char dayStr[3];
+            int day = forecastData[i].day_of_month;
+            snprintf(dayStr, sizeof(dayStr), "%d", day);
+            lv_label_set_text(ui_objs.forecast_days[i].day_label, dayStr);
+        }
+
+        // Update date label (weekday + full date)
+        if (ui_objs.forecast_days[i].date_label) {
+            char date_buf[40];
+            const char* wk = get_weekday_name(forecastData[i].date);
+            snprintf(date_buf, sizeof(date_buf), "%s %s", wk, forecastData[i].date);
+            lv_label_set_text(ui_objs.forecast_days[i].date_label, date_buf);
+        }
+
+        // Update weather icon
+        if (ui_objs.forecast_days[i].icon) {
+            const lv_img_dsc_t* icon = getWeatherIcon(forecastData[i].symbol_code);
+            lv_img_set_src(ui_objs.forecast_days[i].icon, icon);
+            lv_obj_invalidate(ui_objs.forecast_days[i].icon);
+        }
+
+        // Update temperature
+        if (ui_objs.forecast_days[i].temp_label) {
+            char temp_str[20];
+            snprintf(temp_str, sizeof(temp_str), "%.1f °C", forecastData[i].temperature);
+            lv_label_set_text(ui_objs.forecast_days[i].temp_label, temp_str);
+        }
+
+        // Update condition text
+        if (ui_objs.forecast_days[i].condition_label) {
+            lv_label_set_text(ui_objs.forecast_days[i].condition_label, forecastData[i].condition);
+        }
+    }
+
+    // Force screen refresh
+    if (forecast_tile) {
+        lv_obj_invalidate(forecast_tile);
+    }
+}
+
+/**
+ * Fetches historical weather data and generates timestamps
+ */
 static void fetch_historical_data() {
-    ensure_wifi_connection();
-    
     if (WiFi.status() != WL_CONNECTED) {
-        load_historical_from_flash();
-        update_all_objects();
         return;
     }
+
+    std::string cname = selectedCity;
+    auto it = WeatherStation.find(cname);
+    if (it == WeatherStation.end()) {
+        return;
+    }
+
+    int stationId = (int)it->second[0];
+    int param = selectedParameter;
+
+    String url = String("https://opendata-download-metobs.smhi.se/api/version/1.0/parameter/")
+        + String(param) + "/station/" + String(stationId) + "/period/latest-months/data.json";
 
     HTTPClient http;
-    
-    std::string cityName = selectedCity;
-    if (WeatherStation.find(cityName) == WeatherStation.end()) {
-        return;
-    }
-    
-    int stationId = (int)WeatherStation[cityName][0];
-    
-    String historicalURL = "https://opendata-download-metobs.smhi.se/api/version/latest/parameter/";
-    historicalURL += String(selectedParameter);
-    historicalURL += "/station/";
-    historicalURL += String(stationId);
-    historicalURL += "/period/latest-months/data.json";
-    
-    if (!historicalData && !init_historical_data()) {
-        return;
-    }
-    
-    memset(historicalData, 0, HISTORICAL_DATA_POINTS * sizeof(HistoricalDataPoint));
-    currentDataPoints = 0;
-    
-    http.begin(historicalURL);
-    http.setTimeout(15000);
+    http.begin(url);
+    int code = http.GET();
 
-    esp_task_wdt_reset();
-    
-    int httpCode = http.GET();
-    
-    if (httpCode == 200) {
-        String payload = http.getString();
-        
-        if (payload.length() > 100000) {
-            payload = payload.substring(0, 100000);
-        }
-        
-        JsonDocument doc;
-        DeserializationError error = deserializeJson(doc, payload);
-        
-        if (!error) {
-            JsonArray values = doc["value"].as<JsonArray>();
-            
-            int count = 0;
-            for (JsonVariant valueVariant : values) {
-                if (currentDataPoints >= HISTORICAL_DATA_POINTS) break;
-                
-                JsonObject value = valueVariant.as<JsonObject>();
-                
-                historicalData[currentDataPoints].timestamp = value["date"].as<unsigned long>();
-                
-                if (value["value"].is<const char*>()) {
-                    const char* valueStr = value["value"].as<const char*>();
-                    historicalData[currentDataPoints].value = atof(valueStr);
-                } else {
-                    historicalData[currentDataPoints].value = value["value"].as<float>();
-                }
-                
-                const char* quality = value["quality"].as<const char*>();
-                if (quality && strlen(quality) > 0) {
-                    historicalData[currentDataPoints].quality[0] = quality[0];
-                    historicalData[currentDataPoints].quality[1] = '\0';
-                } else {
-                    historicalData[currentDataPoints].quality[0] = '?';
-                    historicalData[currentDataPoints].quality[1] = '\0';
-                }
-                
-                currentDataPoints++;
-                count++;
-                
-                if (count % 50 == 0) {
-                    esp_task_wdt_reset();
-                    delay(10);
-                }
-            }
-            
-            if (currentDataPoints > 0) {
-                update_all_objects();
-                save_historical_to_flash();
-            }
-            
-        } else {
-            load_historical_from_flash();
-            update_all_objects();
-        }
-        
-    } else {
-        load_historical_from_flash();
-        update_all_objects();
+    if (code != 200) {
+        http.end();
+        return;
     }
-    
+
+    String payload = http.getString();
     http.end();
-}
 
-// Update all objects with new data
-static void update_all_objects() {
-    // Send refresh event to all objects
-    if (ui_objs.start_wifi_label) lv_event_send(ui_objs.start_wifi_label, LV_EVENT_REFRESH, NULL);
-    if (ui_objs.start_mem_label) lv_event_send(ui_objs.start_mem_label, LV_EVENT_REFRESH, NULL);
-    if (ui_objs.forecast_title) lv_event_send(ui_objs.forecast_title, LV_EVENT_REFRESH, NULL);
-    if (ui_objs.history_title) lv_event_send(ui_objs.history_title, LV_EVENT_REFRESH, NULL);
-    if (ui_objs.history_current_value) lv_event_send(ui_objs.history_current_value, LV_EVENT_REFRESH, NULL);
-    if (ui_objs.history_chart) lv_event_send(ui_objs.history_chart, LV_EVENT_REFRESH, NULL);
-    if (ui_objs.history_min_label) lv_event_send(ui_objs.history_min_label, LV_EVENT_REFRESH, NULL);
-    if (ui_objs.history_max_label) lv_event_send(ui_objs.history_max_label, LV_EVENT_REFRESH, NULL);
-    if (ui_objs.history_unit_label) lv_event_send(ui_objs.history_unit_label, LV_EVENT_REFRESH, NULL);
-    if (ui_objs.history_points_label) lv_event_send(ui_objs.history_points_label, LV_EVENT_REFRESH, NULL);
-    
-    for (int i = 0; i < 7; i++) {
-        if (ui_objs.forecast_days[i].day_label) lv_event_send(ui_objs.forecast_days[i].day_label, LV_EVENT_REFRESH, NULL);
-        if (ui_objs.forecast_days[i].icon) lv_event_send(ui_objs.forecast_days[i].icon, LV_EVENT_REFRESH, NULL);
-        if (ui_objs.forecast_days[i].temp_label) lv_event_send(ui_objs.forecast_days[i].temp_label, LV_EVENT_REFRESH, NULL);
-        if (ui_objs.forecast_days[i].condition_label) lv_event_send(ui_objs.forecast_days[i].condition_label, LV_EVENT_REFRESH, NULL);
-    }
-}
+    DynamicJsonDocument doc(HISTORICAL_JSON_BUFFER);
+    auto err = deserializeJson(doc, payload);
 
-// Main UI event callback
-static void ui_event_cb(lv_event_t* e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    lv_obj_t* obj = lv_event_get_target(e);
-    ObjectID id = (ObjectID)(uintptr_t)lv_obj_get_user_data(obj);
-    
-    if (code == LV_EVENT_DELETE) {
-        // Clear the object pointer when deleted
-        switch (id) {
-            case OBJ_START_WIFI_LABEL: ui_objs.start_wifi_label = nullptr; break;
-            case OBJ_START_MEM_LABEL: ui_objs.start_mem_label = nullptr; break;
-            case OBJ_FORECAST_TITLE: ui_objs.forecast_title = nullptr; break;
-            case OBJ_HISTORY_TITLE: ui_objs.history_title = nullptr; break;
-            case OBJ_HISTORY_CURRENT_VALUE: ui_objs.history_current_value = nullptr; break;
-            case OBJ_HISTORY_CHART: ui_objs.history_chart = nullptr; break;
-            case OBJ_HISTORY_MIN_LABEL: ui_objs.history_min_label = nullptr; break;
-            case OBJ_HISTORY_MAX_LABEL: ui_objs.history_max_label = nullptr; break;
-            case OBJ_HISTORY_UNIT_LABEL: ui_objs.history_unit_label = nullptr; break;
-            case OBJ_HISTORY_SLIDER: ui_objs.history_slider = nullptr; break;
-            case OBJ_HISTORY_POINTS_LABEL: ui_objs.history_points_label = nullptr; break;
-            case OBJ_SETTINGS_CITY_DROPDOWN: ui_objs.settings_city_dropdown = nullptr; break;
-            case OBJ_SETTINGS_PARAM_DROPDOWN: ui_objs.settings_param_dropdown = nullptr; break;
-            case OBJ_SETTINGS_RESET_BTN: ui_objs.settings_reset_btn = nullptr; break;
-            case OBJ_SETTINGS_SET_DEFAULT_BTN: ui_objs.settings_set_default_btn = nullptr; break;
-            case OBJ_SETTINGS_FACTORY_BTN: ui_objs.settings_factory_btn = nullptr; break;
-            default: break;
-        }
-        
-        for (int i = 0; i < 7; i++) {
-            if (id == (ObjectID)(OBJ_FORECAST_DAY_0 + i)) {
-                ui_objs.forecast_days[i].container = nullptr;
-                ui_objs.forecast_days[i].day_label = nullptr;
-                ui_objs.forecast_days[i].icon = nullptr;
-                ui_objs.forecast_days[i].temp_label = nullptr;
-                ui_objs.forecast_days[i].condition_label = nullptr;
-                break;
-            }
-        }
+    if (err) {
         return;
     }
-    
-    if (code == LV_EVENT_REFRESH) {
-        // Update object content
-        switch (id) {
-            case OBJ_START_WIFI_LABEL: {
-                lv_label_set_text(obj, WiFi.status() == WL_CONNECTED ? "WiFi: Connected" : "WiFi: Disconnected");
-                break;
-            }
-            case OBJ_START_MEM_LABEL: {
-                char mem_str[50];
-                snprintf(mem_str, sizeof(mem_str), "Free RAM: %d KB", ESP.getFreeHeap() / 1024);
-                lv_label_set_text(obj, mem_str);
-                break;
-            }
-            case OBJ_FORECAST_TITLE: {
-                char title[50];
-                snprintf(title, sizeof(title), "7-Day Forecast - %s", selectedCity);
-                lv_label_set_text(obj, title);
-                break;
-            }
-            case OBJ_HISTORY_TITLE: {
-                const char* paramName = "";
-                switch (selectedParameter) {
-                    case 1: paramName = "Temperature"; break;
-                    case 6: paramName = "Humidity"; break;
-                    case 4: paramName = "Wind Speed"; break;
-                    case 9: paramName = "Air Pressure"; break;
-                    default: paramName = "Unknown"; break;
-                }
-                char title[80];
-                snprintf(title, sizeof(title), "Historical %s - %s", paramName, selectedCity);
-                lv_label_set_text(obj, title);
-                break;
-            }
-            case OBJ_HISTORY_CURRENT_VALUE: {
-                const char* unit = "";
-                switch (selectedParameter) {
-                    case 1: unit = "°C"; break;
-                    case 6: unit = "%"; break;
-                    case 4: unit = "m/s"; break;
-                    case 9: unit = "hPa"; break;
-                }
-                char current_str[50];
-                if (currentDataPoints > 0) {
-                    float currentValue = historicalData[currentDataPoints - 1].value;
-                    snprintf(current_str, sizeof(current_str), "Current: %.1f %s", currentValue, unit);
-                } else {
-                    snprintf(current_str, sizeof(current_str), "Current: --");
-                }
-                lv_label_set_text(obj, current_str);
-                break;
-            }
-            case OBJ_HISTORY_CHART: {
-                if (!ui_objs.history_series || currentDataPoints <= 0 || !historicalData) {
-                    for (int i = 0; i < CHART_POINTS; i++) {
-                        ui_objs.history_series->y_points[i] = 0;
-                    }
-                    lv_chart_refresh(obj);
-                    break;
-                }
-                
-                int pointsToShow = (currentDataPoints < CHART_POINTS) ? currentDataPoints : CHART_POINTS;
-                lv_chart_set_point_count(obj, pointsToShow);
-                
-                if (currentDataPoints <= CHART_POINTS) {
-                    for (int i = 0; i < pointsToShow; i++) {
-                        ui_objs.history_series->y_points[i] = (lv_coord_t)historicalData[i].value;
-                    }
-                } else {
-                    int maxOffset = currentDataPoints - CHART_POINTS;
-                    // FIXED: sliderOffset directly used (0 = oldest, 100 = latest)
-                    int offset = (sliderOffset * maxOffset) / 100;
-                    
-                    for (int i = 0; i < CHART_POINTS; i++) {
-                        int dataIndex = offset + i;
-                        if (dataIndex < currentDataPoints) {
-                            ui_objs.history_series->y_points[i] = (lv_coord_t)historicalData[dataIndex].value;
-                        }
-                    }
-                }
-                
-                lv_chart_refresh(obj);
-                break;
-            }
-            case OBJ_HISTORY_MIN_LABEL: {
-                if (currentDataPoints > 0) {
-                    float dataMin = historicalData[0].value;
-                    for (int i = 1; i < currentDataPoints; i++) {
-                        if (historicalData[i].value < dataMin) dataMin = historicalData[i].value;
-                    }
-                    float range = dataMin;
-                    for (int i = 0; i < currentDataPoints; i++) {
-                        if (historicalData[i].value > range) range = historicalData[i].value;
-                    }
-                    range -= dataMin;
-                    if (range < 5) range = 5;
-                    int minY = (int)(dataMin - range * 0.1);
-                    
-                    char min_str[20];
-                    snprintf(min_str, sizeof(min_str), "%d", minY);
-                    lv_label_set_text(obj, min_str);
-                    
-                    if (ui_objs.history_chart) {
-                        int maxY = (int)(dataMin + range * 1.1);
-                        lv_chart_set_range(ui_objs.history_chart, LV_CHART_AXIS_PRIMARY_Y, minY, maxY);
-                    }
-                }
-                break;
-            }
-            case OBJ_HISTORY_MAX_LABEL: {
-                if (currentDataPoints > 0) {
-                    float dataMax = historicalData[0].value;
-                    for (int i = 1; i < currentDataPoints; i++) {
-                        if (historicalData[i].value > dataMax) dataMax = historicalData[i].value;
-                    }
-                    float dataMin = historicalData[0].value;
-                    for (int i = 1; i < currentDataPoints; i++) {
-                        if (historicalData[i].value < dataMin) dataMin = historicalData[i].value;
-                    }
-                    float range = dataMax - dataMin;
-                    if (range < 5) range = 5;
-                    int maxY = (int)(dataMax + range * 0.1);
-                    
-                    char max_str[20];
-                    snprintf(max_str, sizeof(max_str), "%d", maxY);
-                    lv_label_set_text(obj, max_str);
-                }
-                break;
-            }
-            case OBJ_HISTORY_UNIT_LABEL: {
-                const char* unit = "";
-                switch (selectedParameter) {
-                    case 1: unit = "°C"; break;
-                    case 6: unit = "%"; break;
-                    case 4: unit = "m/s"; break;
-                    case 9: unit = "hPa"; break;
-                }
-                lv_label_set_text(obj, unit);
-                break;
-            }
-            case OBJ_HISTORY_POINTS_LABEL: {
-                char points_str[40];
-                snprintf(points_str, sizeof(points_str), "Data points: %d", currentDataPoints);
-                lv_label_set_text(obj, points_str);
-                break;
-            }
-            default: {
-                // Handle forecast day objects
-                for (int i = 0; i < 7; i++) {
-                    if (id == (ObjectID)(OBJ_FORECAST_DAY_0 + i)) {
-                        if (obj == ui_objs.forecast_days[i].day_label) {
-                            const char* dayName = getWeekday(forecastData[i].date);
-                            lv_label_set_text(obj, dayName);
-                        } else if (obj == ui_objs.forecast_days[i].icon) {
-                            lv_img_set_src(obj, getWeatherIcon(forecastData[i].symbol_code));
-                        } else if (obj == ui_objs.forecast_days[i].temp_label) {
-                            char temp_str[20];
-                            snprintf(temp_str, sizeof(temp_str), "%.1f°C", forecastData[i].temperature);
-                            lv_label_set_text(obj, temp_str);
-                        } else if (obj == ui_objs.forecast_days[i].condition_label) {
-                            lv_label_set_text(obj, forecastData[i].symbolToText);
-                        }
-                        break;
-                    }
-                }
-                break;
-            }
-        }
+
+    // Clear old data
+    currentDataPoints = 0;
+    for (int i = 0; i < HISTORICAL_DATA_POINTS; i++) {
+        historicalData[i] = NAN;
+        historicalTime[i][0] = 0;
+    }
+
+    // Find data array
+    JsonArray dataArray;
+    if (doc.containsKey("value") && doc["value"].is<JsonArray>()) {
+        dataArray = doc["value"].as<JsonArray>();
+    } else if (doc.containsKey("values") && doc["values"].is<JsonArray>()) {
+        dataArray = doc["values"].as<JsonArray>();
+    } else if (doc.is<JsonArray>()) {
+        dataArray = doc.as<JsonArray>();
+    } else {
         return;
     }
-    
-    if (code == LV_EVENT_VALUE_CHANGED) {
-        switch (id) {
-            case OBJ_SETTINGS_CITY_DROPDOWN: {
-                if (isSwitchingCity) return;
-                isSwitchingCity = true;
-                
-                selectedCityIndex = lv_dropdown_get_selected(obj);
-                
-                switch (selectedCityIndex) {
-                    case 0: strcpy(selectedCity, "Karlskrona"); break;
-                    case 1: strcpy(selectedCity, "Stockholm"); break;
-                    case 2: strcpy(selectedCity, "Göteborg"); break;
-                    case 3: strcpy(selectedCity, "Malmö"); break;
-                    case 4: strcpy(selectedCity, "Kiruna"); break;
-                    default: strcpy(selectedCity, "Karlskrona"); break;
-                }
-                
-                esp_task_wdt_reset();
-                fetch_weather_data();
-                delay(500);
-                esp_task_wdt_reset();
-                fetch_historical_data();
-                delay(500);
-                isSwitchingCity = false;
-                break;
+
+    // Process each data point
+    for (JsonObject item : dataArray) {
+        if (currentDataPoints >= HISTORICAL_DATA_POINTS) break;
+
+        float value = NAN;
+        if (item.containsKey("value")) {
+            if (item["value"].is<float>()) {
+                value = item["value"].as<float>();
+            } else if (item["value"].is<int>()) {
+                value = (float)item["value"].as<int>();
+            } else if (item["value"].is<const char*>()) {
+                value = atof(item["value"].as<const char*>());
             }
-            case OBJ_SETTINGS_PARAM_DROPDOWN: {
-                int index = lv_dropdown_get_selected(obj);
-                if (index >= 0 && index < 4) {
-                    selectedParameter = PARAMETER_CODES[index];
-                    esp_task_wdt_reset();
-                    fetch_historical_data();
-                }
-                break;
-            }
-            case OBJ_HISTORY_SLIDER: {
-                int32_t value = lv_slider_get_value(obj);
-                // FIXED: Direct mapping (0 = oldest, 100 = latest)
-                sliderOffset = value;
-                if (ui_objs.history_chart) {
-                    lv_event_send(ui_objs.history_chart, LV_EVENT_REFRESH, NULL);
-                }
-                break;
-            }
-            default:
-                break;
         }
-        return;
+
+        historicalData[currentDataPoints] = value;
+        currentDataPoints++;
     }
-    
-    if (code == LV_EVENT_CLICKED) {
-        switch (id) {
-            case OBJ_SETTINGS_RESET_BTN: {
-                selectedCityIndex = DEFAULT_CITY_INDEX;
-                selectedParameter = PARAMETER_CODES[DEFAULT_PARAMETER_INDEX];
-                strcpy(selectedCity, "Karlskrona");
-                
-                if (ui_objs.settings_city_dropdown) {
-                    lv_dropdown_set_selected(ui_objs.settings_city_dropdown, DEFAULT_CITY_INDEX);
-                }
-                if (ui_objs.settings_param_dropdown) {
-                    lv_dropdown_set_selected(ui_objs.settings_param_dropdown, DEFAULT_PARAMETER_INDEX);
-                }
-                
-                esp_task_wdt_reset();
-                fetch_weather_data();
-                delay(500);
-                esp_task_wdt_reset();
-                fetch_historical_data();
-                break;
-            }
-            case OBJ_SETTINGS_SET_DEFAULT_BTN: {
-                // NEW: Save current settings as defaults
-                save_settings_to_flash();
-                
-                // Show confirmation message
-                lv_obj_t* msgbox = lv_msgbox_create(NULL, "Settings Saved", 
-                    "Current settings saved as defaults!\nThey will be used on next startup.",
-                    NULL, true);
-                lv_obj_center(msgbox);
-                
-                // Auto-close after 3 seconds
-                lv_timer_t* timer = lv_timer_create([](lv_timer_t* timer) {
-                lv_obj_t* msgbox = (lv_obj_t*)timer->user_data;
-                lv_msgbox_close(msgbox);
-                lv_timer_del(timer);
-                }, 3000, msgbox);
-                
-                break;
-            }
-            case OBJ_SETTINGS_FACTORY_BTN: {
-                lv_obj_t* mbox = lv_msgbox_create(NULL, "Confirm Factory Reset", 
-                    "Are you sure? This will erase ALL data.", 
-                    (const char*[]){"Cancel", "Reset", ""}, true);
-                lv_obj_add_event_cb(mbox, [](lv_event_t* e) {
-                    lv_obj_t* msgbox = lv_event_get_current_target(e);
-                    const char* txt = lv_msgbox_get_active_btn_text(msgbox);
-                    if (txt && strcmp(txt, "Reset") == 0) {
-                        if (SPIFFS.begin()) {
-                            SPIFFS.format();
-                        }
-                        
-                        selectedCityIndex = DEFAULT_CITY_INDEX;
-                        selectedParameter = PARAMETER_CODES[DEFAULT_PARAMETER_INDEX];
-                        strcpy(selectedCity, "Karlskrona");
-                        
-                        if (historicalData) {
-                            free(historicalData);
-                            historicalData = nullptr;
-                        }
-                        currentDataPoints = 0;
-                        
-                        for (int i = 0; i < 7; i++) {
-                            forecastData[i].date[0] = '\0';
-                            forecastData[i].temperature = 0.0;
-                            forecastData[i].symbol_code = 1;
-                            forecastData[i].symbolToText = "Sunny";
-                        }
-                        
-                        if (ui_objs.settings_city_dropdown) {
-                            lv_dropdown_set_selected(ui_objs.settings_city_dropdown, DEFAULT_CITY_INDEX);
-                        }
-                        if (ui_objs.settings_param_dropdown) {
-                            lv_dropdown_set_selected(ui_objs.settings_param_dropdown, DEFAULT_PARAMETER_INDEX);
-                        }
-                        
-                        update_all_objects();
-                    }
-                    lv_msgbox_close(msgbox);
-                }, LV_EVENT_VALUE_CHANGED, NULL);
-                lv_obj_center(mbox);
-                break;
-            }
-            default:
-                break;
+
+    // Generate timestamps for all data points
+    for (int i = 0; i < currentDataPoints; i++) {
+        generate_timestamp(i, currentDataPoints, historicalTime[i], sizeof(historicalTime[0]));
+    }
+
+    // Update chart
+    if (history_chart) {
+        if (temp_series) lv_chart_remove_series(history_chart, temp_series);
+        temp_series = lv_chart_add_series(history_chart, lv_palette_main(LV_PALETTE_ORANGE), LV_CHART_AXIS_PRIMARY_Y);
+
+        int startIndex = max(0, currentDataPoints - CHART_POINTS - sliderOffset);
+        int pointsToShow = max(1, min(CHART_POINTS, currentDataPoints - startIndex));
+        lv_chart_set_point_count(history_chart, pointsToShow);
+
+        for (int i = 0; i < pointsToShow; i++) {
+            float v = historicalData[startIndex + i];
+            if (isnan(v)) v = 0;
+            lv_chart_set_next_value(history_chart, temp_series, (lv_coord_t)round(v));
         }
-        return;
+
+        compute_and_set_dynamic_y_range(startIndex, pointsToShow);
+        update_history_axis_and_xlabels(pointsToShow, startIndex);
+        lv_chart_refresh(history_chart);
     }
 }
 
-// Helper function to create object with event callback
-static lv_obj_t* create_obj_with_events(lv_obj_t* parent, const lv_obj_class_t* class_p, ObjectID id) {
-    lv_obj_t* obj = lv_obj_class_create_obj(class_p, parent);
-    if (obj) {
-        lv_obj_set_user_data(obj, (void*)(uintptr_t)id);
-        lv_obj_add_event_cb(obj, ui_event_cb, LV_EVENT_ALL, NULL);
-    }
-    return obj;
-}
-
-// Create start screen
+/**
+ * Creates the start screen
+ * @param parent Parent LVGL object
+ */
 static void create_start_screen(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(parent, lv_color_hex(0x003366), 0);
+
+    lv_obj_t* title = lv_label_create(parent);
+    lv_label_set_text(title, "Weather Station");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_28, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 30);
+
+    lv_obj_t* group = lv_label_create(parent);
+    lv_label_set_text(group, "Group 13");
+    lv_obj_set_style_text_font(group, &lv_font_montserrat_24, 0);
+    lv_obj_align(group, LV_ALIGN_TOP_MID, 0, 80);
+
+    lv_obj_t* ver = lv_label_create(parent);
+    lv_label_set_text(ver, "Version 1.6");
+    lv_obj_set_style_text_font(ver, &lv_font_montserrat_20, 0);
+    lv_obj_align(ver, LV_ALIGN_TOP_MID, 0, 120);
+
+    lv_obj_t* wifi = lv_label_create(parent);
+    lv_label_set_text(wifi, WiFi.status() == WL_CONNECTED ? "WiFi: Connected" : "WiFi: Disconnected");
+    lv_obj_set_style_text_font(wifi, &lv_font_montserrat_16, 0);
+    lv_obj_align(wifi, LV_ALIGN_TOP_MID, 0, 160);
     
-    lv_obj_t* title_label = lv_label_create(parent);
-    lv_label_set_text(title_label, "Weather Station");
-    lv_obj_set_style_text_color(title_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(title_label, &lv_font_montserrat_28, 0);
-    lv_obj_align(title_label, LV_ALIGN_TOP_MID, 0, 30);
-    
-    lv_obj_t* group_label = lv_label_create(parent);
-    lv_label_set_text(group_label, "Group 13");
-    lv_obj_set_style_text_color(group_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(group_label, &lv_font_montserrat_24, 0);
-    lv_obj_align(group_label, LV_ALIGN_TOP_MID, 0, 80);
-    
-    lv_obj_t* version_label = lv_label_create(parent);
-    lv_label_set_text(version_label, "Version 1.0");
-    lv_obj_set_style_text_color(version_label, lv_color_white(), 0);
-    lv_obj_set_style_text_font(version_label, &lv_font_montserrat_20, 0);
-    lv_obj_align(version_label, LV_ALIGN_TOP_MID, 0, 120);
-    
-    ui_objs.start_wifi_label = lv_label_create(parent);
-    lv_obj_set_user_data(ui_objs.start_wifi_label, (void*)(uintptr_t)OBJ_START_WIFI_LABEL);
-    lv_obj_add_event_cb(ui_objs.start_wifi_label, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_set_style_text_color(ui_objs.start_wifi_label, lv_color_hex(0xCCCCCC), 0);
-    lv_obj_set_style_text_font(ui_objs.start_wifi_label, &lv_font_montserrat_16, 0);
-    lv_obj_align(ui_objs.start_wifi_label, LV_ALIGN_TOP_MID, 0, 160);
-    
-    ui_objs.start_mem_label = lv_label_create(parent);
-    lv_obj_set_user_data(ui_objs.start_mem_label, (void*)(uintptr_t)OBJ_START_MEM_LABEL);
-    lv_obj_add_event_cb(ui_objs.start_mem_label, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_set_style_text_color(ui_objs.start_mem_label, lv_color_hex(0xCCCCCC), 0);
-    lv_obj_set_style_text_font(ui_objs.start_mem_label, &lv_font_montserrat_16, 0);
-    lv_obj_align(ui_objs.start_mem_label, LV_ALIGN_TOP_MID, 0, 190);
-    
-    lv_obj_t* nav_label = lv_label_create(parent);
-    lv_label_set_text(nav_label, "Swipe right for forecast");
-    lv_obj_set_style_text_color(nav_label, lv_color_hex(0xCCCCCC), 0);
-    lv_obj_set_style_text_font(nav_label, &lv_font_montserrat_16, 0);
-    lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -20);
+    // Display current date
+    char current_date[12];
+    get_current_date(current_date, sizeof(current_date));
+    lv_obj_t* date_label = lv_label_create(parent);
+    lv_label_set_text_fmt(date_label, "Date: %s", current_date);
+    lv_obj_set_style_text_font(date_label, &lv_font_montserrat_16, 0);
+    lv_obj_align(date_label, LV_ALIGN_TOP_MID, 0, 190);
+
+    lv_obj_t* nav = lv_label_create(parent);
+    lv_label_set_text(nav, "Forecast screen ->");
+    lv_obj_set_style_text_font(nav, &lv_font_montserrat_16, 0);
+    lv_obj_align(nav, LV_ALIGN_BOTTOM_MID, 0, -20);
 }
 
-// Create forecast screen
+/**
+ * Creates the forecast screen with 7-day weather cards
+ * @param parent Parent LVGL object
+ */
 static void create_forecast_screen(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(parent, lv_color_white(), 0);
-    
+
     ui_objs.forecast_title = lv_label_create(parent);
     lv_obj_set_user_data(ui_objs.forecast_title, (void*)(uintptr_t)OBJ_FORECAST_TITLE);
     lv_obj_add_event_cb(ui_objs.forecast_title, ui_event_cb, LV_EVENT_ALL, NULL);
+    lv_label_set_text(ui_objs.forecast_title, "7-Day Forecast");
     lv_obj_set_style_text_color(ui_objs.forecast_title, lv_color_black(), 0);
     lv_obj_set_style_text_font(ui_objs.forecast_title, &lv_font_montserrat_22, 0);
     lv_obj_align(ui_objs.forecast_title, LV_ALIGN_TOP_MID, 0, 10);
-    
-    lv_obj_t* days_container = lv_obj_create(parent);
-    lv_obj_set_size(days_container, 440, 300);
-    lv_obj_align(days_container, LV_ALIGN_TOP_MID, 0, 50);
-    lv_obj_set_flex_flow(days_container, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(days_container, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_border_width(days_container, 0, 0);
-    lv_obj_set_style_bg_opa(days_container, LV_OPA_0, 0);
-    
+
+    // Calculate positions for cards (4x2 layout)
+    int screen_width = lv_disp_get_hor_res(NULL);
+    int card_width = (screen_width - 60) / 4;
+    int card_height = 140;
+    int start_x = 10;
+    int start_y = 50;
+    int padding = 10;
+
     for (int i = 0; i < 7; i++) {
-        ui_objs.forecast_days[i].container = lv_obj_create(days_container);
-        lv_obj_set_size(ui_objs.forecast_days[i].container, 110, 80);
-        lv_obj_set_style_border_width(ui_objs.forecast_days[i].container, 1, 0);
-        lv_obj_set_style_border_color(ui_objs.forecast_days[i].container, lv_color_hex(0xCCCCCC), 0);
-        lv_obj_set_style_radius(ui_objs.forecast_days[i].container, 8, 0);
+        int row = i / 4;
+        int col = i % 4;
         
+        int x = start_x + col * (card_width + padding);
+        int y = start_y + row * (card_height + padding);
+
+        // Create card container
+        ui_objs.forecast_days[i].container = lv_obj_create(parent);
+        lv_obj_set_pos(ui_objs.forecast_days[i].container, x, y);
+        lv_obj_set_size(ui_objs.forecast_days[i].container, card_width, card_height);
+        lv_obj_set_style_radius(ui_objs.forecast_days[i].container, 8, 0);
+        lv_obj_set_style_border_width(ui_objs.forecast_days[i].container, 1, 0);
+        lv_obj_set_style_border_color(ui_objs.forecast_days[i].container, lv_color_hex(0xE0E0E0), 0);
+        lv_obj_set_style_bg_color(ui_objs.forecast_days[i].container, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_pad_all(ui_objs.forecast_days[i].container, 4, 0);
+
+        // Day of month (top left)
         ui_objs.forecast_days[i].day_label = lv_label_create(ui_objs.forecast_days[i].container);
         lv_obj_set_user_data(ui_objs.forecast_days[i].day_label, (void*)(uintptr_t)(OBJ_FORECAST_DAY_0 + i));
         lv_obj_add_event_cb(ui_objs.forecast_days[i].day_label, ui_event_cb, LV_EVENT_ALL, NULL);
-        lv_obj_set_style_text_color(ui_objs.forecast_days[i].day_label, lv_color_black(), 0);
         lv_obj_set_style_text_font(ui_objs.forecast_days[i].day_label, &lv_font_montserrat_16, 0);
-        lv_obj_align(ui_objs.forecast_days[i].day_label, LV_ALIGN_TOP_MID, 0, 5);
-        
+        lv_obj_set_style_text_color(ui_objs.forecast_days[i].day_label, lv_color_hex(0x333333), 0);
+        lv_obj_align(ui_objs.forecast_days[i].day_label, LV_ALIGN_TOP_LEFT, 8, 6);
+        lv_label_set_text(ui_objs.forecast_days[i].day_label, "");
+
+        // Date (top right)
+        ui_objs.forecast_days[i].date_label = lv_label_create(ui_objs.forecast_days[i].container);
+        lv_obj_set_user_data(ui_objs.forecast_days[i].date_label, (void*)(uintptr_t)(OBJ_FORECAST_DAY_0 + i));
+        lv_obj_add_event_cb(ui_objs.forecast_days[i].date_label, ui_event_cb, LV_EVENT_ALL, NULL);
+        lv_obj_set_style_text_font(ui_objs.forecast_days[i].date_label, &lv_font_montserrat_12, 0);
+        lv_obj_set_style_text_color(ui_objs.forecast_days[i].date_label, lv_color_hex(0x666666), 0);
+        lv_obj_align(ui_objs.forecast_days[i].date_label, LV_ALIGN_TOP_RIGHT, -8, 6);
+        lv_label_set_text(ui_objs.forecast_days[i].date_label, "");
+
+        // Weather icon (centered)
         ui_objs.forecast_days[i].icon = lv_img_create(ui_objs.forecast_days[i].container);
         lv_obj_set_user_data(ui_objs.forecast_days[i].icon, (void*)(uintptr_t)(OBJ_FORECAST_DAY_0 + i));
         lv_obj_add_event_cb(ui_objs.forecast_days[i].icon, ui_event_cb, LV_EVENT_ALL, NULL);
         lv_img_set_src(ui_objs.forecast_days[i].icon, &Sunny);
-        lv_obj_align(ui_objs.forecast_days[i].icon, LV_ALIGN_CENTER, 0, -5);
-        
+        lv_obj_align(ui_objs.forecast_days[i].icon, LV_ALIGN_CENTER, 0, -10);
+
+        // Temperature (below icon)
         ui_objs.forecast_days[i].temp_label = lv_label_create(ui_objs.forecast_days[i].container);
         lv_obj_set_user_data(ui_objs.forecast_days[i].temp_label, (void*)(uintptr_t)(OBJ_FORECAST_DAY_0 + i));
         lv_obj_add_event_cb(ui_objs.forecast_days[i].temp_label, ui_event_cb, LV_EVENT_ALL, NULL);
-        lv_obj_set_style_text_color(ui_objs.forecast_days[i].temp_label, lv_color_black(), 0);
-        lv_obj_set_style_text_font(ui_objs.forecast_days[i].temp_label, &lv_font_montserrat_14, 0);
-        lv_obj_align(ui_objs.forecast_days[i].temp_label, LV_ALIGN_BOTTOM_MID, 0, -5);
-        
+        lv_obj_set_style_text_font(ui_objs.forecast_days[i].temp_label, &lv_font_montserrat_18, 0);
+        lv_obj_set_style_text_color(ui_objs.forecast_days[i].temp_label, lv_color_hex(0x000000), 0);
+        lv_obj_align(ui_objs.forecast_days[i].temp_label, LV_ALIGN_CENTER, 0, 25);
+        lv_label_set_text(ui_objs.forecast_days[i].temp_label, "");
+
+        // Weather condition (bottom)
         ui_objs.forecast_days[i].condition_label = lv_label_create(ui_objs.forecast_days[i].container);
         lv_obj_set_user_data(ui_objs.forecast_days[i].condition_label, (void*)(uintptr_t)(OBJ_FORECAST_DAY_0 + i));
         lv_obj_add_event_cb(ui_objs.forecast_days[i].condition_label, ui_event_cb, LV_EVENT_ALL, NULL);
-        lv_obj_set_style_text_color(ui_objs.forecast_days[i].condition_label, lv_color_hex(0x666666), 0);
         lv_obj_set_style_text_font(ui_objs.forecast_days[i].condition_label, &lv_font_montserrat_12, 0);
-        lv_obj_align(ui_objs.forecast_days[i].condition_label, LV_ALIGN_CENTER, 0, 8);
+        lv_obj_set_style_text_color(ui_objs.forecast_days[i].condition_label, lv_color_hex(0x666666), 0);
+        lv_obj_align(ui_objs.forecast_days[i].condition_label, LV_ALIGN_BOTTOM_MID, 0, -6);
+        lv_label_set_text(ui_objs.forecast_days[i].condition_label, "");
     }
-    
+
     lv_obj_t* nav_label = lv_label_create(parent);
-    lv_label_set_text(nav_label, "Swipe left/right to navigate");
+    lv_label_set_text(nav_label, "<- Start screen | History screen ->");
     lv_obj_set_style_text_color(nav_label, lv_color_hex(0x666666), 0);
     lv_obj_set_style_text_font(nav_label, &lv_font_montserrat_14, 0);
     lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -10);
 }
 
-// Create historical data screen
+/**
+ * Creates the history screen with chart
+ * @param parent Parent LVGL object
+ */
 static void create_history_screen(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(parent, lv_color_white(), 0);
-    
-    ui_objs.history_title = lv_label_create(parent);
-    lv_obj_set_user_data(ui_objs.history_title, (void*)(uintptr_t)OBJ_HISTORY_TITLE);
-    lv_obj_add_event_cb(ui_objs.history_title, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_set_style_text_color(ui_objs.history_title, lv_color_black(), 0);
-    lv_obj_set_style_text_font(ui_objs.history_title, &lv_font_montserrat_22, 0);
-    lv_obj_align(ui_objs.history_title, LV_ALIGN_TOP_MID, 0, 10);
-    
-    ui_objs.history_current_value = lv_label_create(parent);
-    lv_obj_set_user_data(ui_objs.history_current_value, (void*)(uintptr_t)OBJ_HISTORY_CURRENT_VALUE);
-    lv_obj_add_event_cb(ui_objs.history_current_value, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_set_style_text_color(ui_objs.history_current_value, lv_color_hex(0x333333), 0);
-    lv_obj_set_style_text_font(ui_objs.history_current_value, &lv_font_montserrat_14, 0);
-    lv_obj_align_to(ui_objs.history_current_value, parent, LV_ALIGN_TOP_RIGHT, -20, 15);
-    
-    ui_objs.history_chart = lv_chart_create(parent);
-    lv_obj_set_user_data(ui_objs.history_chart, (void*)(uintptr_t)OBJ_HISTORY_CHART);
-    lv_obj_add_event_cb(ui_objs.history_chart, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_set_size(ui_objs.history_chart, 380, 180);
-    lv_obj_align(ui_objs.history_chart, LV_ALIGN_TOP_MID, 0, 50);
-    lv_chart_set_type(ui_objs.history_chart, LV_CHART_TYPE_LINE);
-    lv_chart_set_div_line_count(ui_objs.history_chart, 5, 5);
-    lv_chart_set_point_count(ui_objs.history_chart, CHART_POINTS);
-    lv_chart_set_range(ui_objs.history_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
-    
-    ui_objs.history_min_label = lv_label_create(parent);
-    lv_obj_set_user_data(ui_objs.history_min_label, (void*)(uintptr_t)OBJ_HISTORY_MIN_LABEL);
-    lv_obj_add_event_cb(ui_objs.history_min_label, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_label_set_text(ui_objs.history_min_label, "0");
-    lv_obj_set_style_text_color(ui_objs.history_min_label, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_text_font(ui_objs.history_min_label, &lv_font_montserrat_12, 0);
-    lv_obj_align_to(ui_objs.history_min_label, ui_objs.history_chart, LV_ALIGN_OUT_BOTTOM_LEFT, -25, -5);
-    
-    ui_objs.history_max_label = lv_label_create(parent);
-    lv_obj_set_user_data(ui_objs.history_max_label, (void*)(uintptr_t)OBJ_HISTORY_MAX_LABEL);
-    lv_obj_add_event_cb(ui_objs.history_max_label, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_label_set_text(ui_objs.history_max_label, "100");
-    lv_obj_set_style_text_color(ui_objs.history_max_label, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_text_font(ui_objs.history_max_label, &lv_font_montserrat_12, 0);
-    lv_obj_align_to(ui_objs.history_max_label, ui_objs.history_chart, LV_ALIGN_OUT_TOP_LEFT, -25, 5);
-    
-    ui_objs.history_unit_label = lv_label_create(parent);
-    lv_obj_set_user_data(ui_objs.history_unit_label, (void*)(uintptr_t)OBJ_HISTORY_UNIT_LABEL);
-    lv_obj_add_event_cb(ui_objs.history_unit_label, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_label_set_text(ui_objs.history_unit_label, "units");
-    lv_obj_set_style_text_color(ui_objs.history_unit_label, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_text_font(ui_objs.history_unit_label, &lv_font_montserrat_12, 0);
-    lv_obj_align_to(ui_objs.history_unit_label, ui_objs.history_chart, LV_ALIGN_OUT_LEFT_MID, -40, 0);
-    
-    ui_objs.history_series = lv_chart_add_series(ui_objs.history_chart, lv_palette_main(LV_PALETTE_RED), LV_CHART_AXIS_PRIMARY_Y);
-    
-    for (int i = 0; i < CHART_POINTS; i++) {
-        ui_objs.history_series->y_points[i] = 0;
+
+    lv_obj_t* title = lv_label_create(parent);
+    lv_label_set_text(title, "Historical Data");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_22, 0);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 6);
+
+    axis_title_label = lv_label_create(parent);
+    lv_label_set_text(axis_title_label, parameterAxisTitle(selectedParameter));
+    lv_obj_set_style_text_font(axis_title_label, &lv_font_montserrat_14, 0);
+    lv_obj_align(axis_title_label, LV_ALIGN_TOP_LEFT, 8, 36);
+
+    history_chart = lv_chart_create(parent);
+    lv_obj_set_size(history_chart, 380, 240);
+    lv_obj_align(history_chart, LV_ALIGN_CENTER, 0, -6);
+    lv_chart_set_type(history_chart, LV_CHART_TYPE_LINE);
+    lv_chart_set_div_line_count(history_chart, 4, 8);
+    lv_chart_set_point_count(history_chart, CHART_POINTS);
+    lv_obj_set_style_pad_bottom(history_chart, 36, 0);
+    lv_obj_set_style_pad_left(history_chart, 40, 0);
+    lv_obj_set_style_pad_right(history_chart, 10, 0);
+
+    temp_series = lv_chart_add_series(history_chart, lv_palette_main(LV_PALETTE_BLUE), LV_CHART_AXIS_PRIMARY_Y);
+
+    // Create Y-axis labels
+    for (int i = 0; i < 5; i++) {
+        y_axis_labels[i] = lv_label_create(parent);
+        lv_label_set_text(y_axis_labels[i], "-");
+        lv_obj_set_style_text_font(y_axis_labels[i], &lv_font_montserrat_12, 0);
+        lv_obj_align(y_axis_labels[i], LV_ALIGN_CENTER, -180, -80 + i * 40);
     }
-    lv_chart_refresh(ui_objs.history_chart);
+
+    // Create X-axis labels container
+    lv_obj_t* x_axis_container = lv_obj_create(parent);
+    lv_obj_set_size(x_axis_container, 380, 48);
+    lv_obj_align_to(x_axis_container, history_chart, LV_ALIGN_OUT_BOTTOM_MID, 0, 6);
+    lv_obj_set_style_bg_opa(x_axis_container, LV_OPA_0, 0);
+    lv_obj_set_flex_flow(x_axis_container, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(x_axis_container, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     
-    ui_objs.history_slider = lv_slider_create(parent);
-    lv_obj_set_user_data(ui_objs.history_slider, (void*)(uintptr_t)OBJ_HISTORY_SLIDER);
-    lv_obj_add_event_cb(ui_objs.history_slider, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_set_size(ui_objs.history_slider, 380, 20);
-    lv_obj_align(ui_objs.history_slider, LV_ALIGN_BOTTOM_MID, 0, -50);
-    lv_slider_set_range(ui_objs.history_slider, 0, 100);
-    lv_slider_set_value(ui_objs.history_slider, 100, LV_ANIM_OFF); // Start at 100 (latest)
-    
+    for (int i = 0; i < 5; i++) {
+        x_date_labels[i] = lv_label_create(x_axis_container);
+        lv_label_set_text(x_date_labels[i], "-");
+        lv_obj_set_style_text_font(x_date_labels[i], &lv_font_montserrat_12, 0);
+    }
+
+    // Create scroll slider
+    history_slider = lv_slider_create(parent);
+    lv_obj_set_size(history_slider, 360, 20);
+    lv_obj_align(history_slider, LV_ALIGN_BOTTOM_MID, 0, -40);
+    lv_slider_set_range(history_slider, 0, 100);
+    lv_slider_set_value(history_slider, 100, LV_ANIM_OFF);
+
+    lv_obj_add_event_cb(history_slider, [](lv_event_t* e) {
+        lv_obj_t* s = lv_event_get_target(e);
+        int32_t val = lv_slider_get_value(s);
+
+        if (currentDataPoints > CHART_POINTS) {
+            int maxOffset = currentDataPoints - CHART_POINTS;
+            sliderOffset = safe_map(val, 0, 100, 0, maxOffset);
+            if (sliderOffset < 0) sliderOffset = 0;
+            int startIndex = max(0, currentDataPoints - CHART_POINTS - sliderOffset);
+
+            if (temp_series) lv_chart_remove_series(history_chart, temp_series);
+            temp_series = lv_chart_add_series(history_chart, lv_palette_main(LV_PALETTE_BLUE), LV_CHART_AXIS_PRIMARY_Y);
+
+            int pointsToShow = max(1, min(CHART_POINTS, currentDataPoints - startIndex));
+            lv_chart_set_point_count(history_chart, pointsToShow);
+
+            for (int i = 0; i < pointsToShow; i++) {
+                float v = historicalData[startIndex + i];
+                if (isnan(v)) v = 0;
+                lv_chart_set_next_value(history_chart, temp_series, (lv_coord_t)round(v));
+            }
+
+            compute_and_set_dynamic_y_range(startIndex, pointsToShow);
+            update_history_axis_and_xlabels(pointsToShow, startIndex);
+            lv_chart_refresh(history_chart);
+        }
+    }, LV_EVENT_VALUE_CHANGED, NULL);
+
     lv_obj_t* slider_label = lv_label_create(parent);
-    lv_label_set_text(slider_label, "Scroll through data (0=oldest, 100=latest)");
-    lv_obj_set_style_text_color(slider_label, lv_color_black(), 0);
+    lv_label_set_text(slider_label, "Scroll through historical data");
     lv_obj_set_style_text_font(slider_label, &lv_font_montserrat_14, 0);
-    lv_obj_align_to(slider_label, ui_objs.history_slider, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
-    
-    ui_objs.history_points_label = lv_label_create(parent);
-    lv_obj_set_user_data(ui_objs.history_points_label, (void*)(uintptr_t)OBJ_HISTORY_POINTS_LABEL);
-    lv_obj_add_event_cb(ui_objs.history_points_label, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_label_set_text(ui_objs.history_points_label, "Data points: 0");
-    lv_obj_set_style_text_color(ui_objs.history_points_label, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_text_font(ui_objs.history_points_label, &lv_font_montserrat_12, 0);
-    lv_obj_align_to(ui_objs.history_points_label, ui_objs.history_chart, LV_ALIGN_OUT_BOTTOM_RIGHT, -10, -25);
-    
-    lv_obj_t* nav_label = lv_label_create(parent);
-    lv_label_set_text(nav_label, "Swipe left for settings");
-    lv_obj_set_style_text_color(nav_label, lv_color_hex(0x666666), 0);
-    lv_obj_set_style_text_font(nav_label, &lv_font_montserrat_14, 0);
-    lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_align_to(slider_label, history_slider, LV_ALIGN_OUT_BOTTOM_MID, 0, 6);
+
+    lv_obj_t* nav = lv_label_create(parent);
+    lv_label_set_text(nav, "<- Forecast screen | Settings screen ->");
+    lv_obj_set_style_text_font(nav, &lv_font_montserrat_14, 0);
+    lv_obj_align(nav, LV_ALIGN_BOTTOM_MID, 0, -6);
 }
 
-// Create settings screen
+/**
+ * Creates the settings screen
+ * @param parent Parent LVGL object
+ */
 static void create_settings_screen(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(parent, lv_color_hex(0xEEEEEE), 0);
-    
     lv_obj_t* title = lv_label_create(parent);
     lv_label_set_text(title, "Settings");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_26, 0);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 10);
-    
+
+    // City selection
     lv_obj_t* city_label = lv_label_create(parent);
     lv_label_set_text(city_label, "Select City:");
-    lv_obj_set_style_text_color(city_label, lv_color_black(), 0);
-    lv_obj_align(city_label, LV_ALIGN_TOP_LEFT, 20, 60);
-    
-    ui_objs.settings_city_dropdown = lv_dropdown_create(parent);
-    lv_obj_set_user_data(ui_objs.settings_city_dropdown, (void*)(uintptr_t)OBJ_SETTINGS_CITY_DROPDOWN);
-    lv_obj_add_event_cb(ui_objs.settings_city_dropdown, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_dropdown_set_options(ui_objs.settings_city_dropdown,
-        "Karlskrona\n"
-        "Stockholm\n"
-        "Göteborg\n"
-        "Malmö\n"
-        "Kiruna"
+    lv_obj_align(city_label, LV_ALIGN_TOP_LEFT, 12, 56);
+
+    city_dropdown = lv_dropdown_create(parent);
+    lv_dropdown_set_options(city_dropdown,
+        "Karlskrona (65090)\nStockholm (97400)\nGoteborg (72420)\nMalmo (53300)\nKiruna (180940)"
     );
-    lv_obj_set_width(ui_objs.settings_city_dropdown, 240);
-    lv_obj_align(ui_objs.settings_city_dropdown, LV_ALIGN_TOP_LEFT, 20, 90);
-    
+    lv_obj_set_width(city_dropdown, 240);
+    lv_obj_align(city_dropdown, LV_ALIGN_TOP_LEFT, 12, 86);
+    lv_dropdown_set_selected(city_dropdown, selectedCityIndex);
+    lv_obj_add_event_cb(city_dropdown, [](lv_event_t* e) {
+        selectedCityIndex = lv_dropdown_get_selected(city_dropdown);
+        update_selected_city_name();
+        fetch_weather_data();
+        update_forecast_title();
+        fetch_historical_data();
+    }, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Parameter selection
     lv_obj_t* param_label = lv_label_create(parent);
     lv_label_set_text(param_label, "Select Weather Parameter:");
-    lv_obj_set_style_text_color(param_label, lv_color_black(), 0);
-    lv_obj_align(param_label, LV_ALIGN_TOP_LEFT, 20, 150);
-    
-    ui_objs.settings_param_dropdown = lv_dropdown_create(parent);
-    lv_obj_set_user_data(ui_objs.settings_param_dropdown, (void*)(uintptr_t)OBJ_SETTINGS_PARAM_DROPDOWN);
-    lv_obj_add_event_cb(ui_objs.settings_param_dropdown, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_dropdown_set_options(ui_objs.settings_param_dropdown,
-        "Temperature (1)\n"
-        "Humidity (6)\n"
-        "Wind Speed (4)\n"
-        "Air Pressure (9)"
+    lv_obj_align(param_label, LV_ALIGN_TOP_LEFT, 12, 146);
+
+    param_dropdown = lv_dropdown_create(parent);
+    lv_dropdown_set_options(param_dropdown,
+        "Temperature (1)\nHumidity (6)\nWind Speed (4)\nAir Pressure (9)"
     );
-    lv_obj_set_width(ui_objs.settings_param_dropdown, 240);
-    lv_obj_align(ui_objs.settings_param_dropdown, LV_ALIGN_TOP_LEFT, 20, 180);
+    lv_obj_set_width(param_dropdown, 240);
+    lv_obj_align(param_dropdown, LV_ALIGN_TOP_LEFT, 12, 176);
+
+    int paramIndex = 0;
+    for (int i = 0; i < 4; i++) if (PARAMETER_CODES[i] == selectedParameter) paramIndex = i;
+    lv_dropdown_set_selected(param_dropdown, paramIndex);
+
+    lv_obj_add_event_cb(param_dropdown, [](lv_event_t* e) {
+        int idx = lv_dropdown_get_selected(param_dropdown);
+        if (idx >= 0 && idx < (int)(sizeof(PARAMETER_CODES) / sizeof(PARAMETER_CODES[0]))) {
+            selectedParameter = PARAMETER_CODES[idx];
+            if (axis_title_label) lv_label_set_text(axis_title_label, parameterAxisTitle(selectedParameter));
+            fetch_historical_data();
+        }
+    }, LV_EVENT_VALUE_CHANGED, NULL);
+
+    // Reset button
+    lv_obj_t* reset_btn = lv_btn_create(parent);
+    lv_obj_set_size(reset_btn, 200, 40);
+    lv_obj_align(reset_btn, LV_ALIGN_BOTTOM_LEFT, 12, -84);
+    lv_obj_add_event_cb(reset_btn, [](lv_event_t* e) {
+        preferences.begin(PREF_NAMESPACE, true);
+        selectedCityIndex = preferences.getInt(PREF_CITY, DEFAULT_CITY_INDEX);
+        int pidx = preferences.getInt(PREF_PARAM, DEFAULT_PARAMETER_INDEX);
+        preferences.end();
+        if (pidx < 0 || pidx > 3) pidx = DEFAULT_PARAMETER_INDEX;
+        selectedParameter = PARAMETER_CODES[pidx];
+        update_selected_city_name();
+        update_forecast_title();
+        fetch_weather_data();
+        fetch_historical_data();
+        lv_dropdown_set_selected(city_dropdown, selectedCityIndex);
+        lv_dropdown_set_selected(param_dropdown, pidx);
+    }, LV_EVENT_CLICKED, NULL);
     
-    // NEW: Set dropdown selections based on loaded settings
-    if (!defaultsLoaded) {
-        // Load settings first if not already loaded
-        load_settings_from_flash();
-        defaultsLoaded = true;
-    }
-    
-    lv_dropdown_set_selected(ui_objs.settings_city_dropdown, selectedCityIndex);
-    lv_dropdown_set_selected(ui_objs.settings_param_dropdown, 
-        (selectedParameter == 1) ? 0 : 
-        (selectedParameter == 6) ? 1 : 
-        (selectedParameter == 4) ? 2 : 3);
-    
-    ui_objs.settings_reset_btn = lv_btn_create(parent);
-    lv_obj_set_user_data(ui_objs.settings_reset_btn, (void*)(uintptr_t)OBJ_SETTINGS_RESET_BTN);
-    lv_obj_add_event_cb(ui_objs.settings_reset_btn, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_set_size(ui_objs.settings_reset_btn, 200, 40);
-    lv_obj_align(ui_objs.settings_reset_btn, LV_ALIGN_BOTTOM_LEFT, 20, -180);
-    
-    lv_obj_t* reset_label = lv_label_create(ui_objs.settings_reset_btn);
+    lv_obj_t* reset_label = lv_label_create(reset_btn);
     lv_label_set_text(reset_label, "Reset to Default");
     lv_obj_center(reset_label);
+
+    // Save button
+    lv_obj_t* save_btn = lv_btn_create(parent);
+    lv_obj_set_size(save_btn, 200, 40);
+    lv_obj_align(save_btn, LV_ALIGN_BOTTOM_LEFT, 12, -34);
+    lv_obj_add_event_cb(save_btn, [](lv_event_t* e) {
+        int pidx = 0;
+        for (int i = 0; i < 4; i++) if (PARAMETER_CODES[i] == selectedParameter) pidx = i;
+        preferences.begin(PREF_NAMESPACE, false);
+        preferences.putInt(PREF_CITY, selectedCityIndex);
+        preferences.putInt(PREF_PARAM, pidx);
+        preferences.end();
+    }, LV_EVENT_CLICKED, NULL);
     
-    // NEW: Set as Default button
-    ui_objs.settings_set_default_btn = lv_btn_create(parent);
-    lv_obj_set_user_data(ui_objs.settings_set_default_btn, (void*)(uintptr_t)OBJ_SETTINGS_SET_DEFAULT_BTN);
-    lv_obj_add_event_cb(ui_objs.settings_set_default_btn, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_set_size(ui_objs.settings_set_default_btn, 200, 40);
-    lv_obj_align(ui_objs.settings_set_default_btn, LV_ALIGN_BOTTOM_LEFT, 20, -130);
-    lv_obj_set_style_bg_color(ui_objs.settings_set_default_btn, lv_palette_main(LV_PALETTE_BLUE), 0);
-    
-    lv_obj_t* set_default_label = lv_label_create(ui_objs.settings_set_default_btn);
-    lv_label_set_text(set_default_label, "Set as Default");
-    lv_obj_center(set_default_label);
-    lv_obj_set_style_text_color(set_default_label, lv_color_white(), 0);
-    
-    lv_obj_t* default_info_label = lv_label_create(parent);
-    lv_label_set_text(default_info_label, "Saves current selection for next startup");
-    lv_obj_set_style_text_color(default_info_label, lv_palette_main(LV_PALETTE_BLUE), 0);
-    lv_obj_set_style_text_font(default_info_label, &lv_font_montserrat_12, 0);
-    lv_obj_align_to(default_info_label, ui_objs.settings_set_default_btn, LV_ALIGN_OUT_BOTTOM_MID, 0, 5);
-    
-    ui_objs.settings_factory_btn = lv_btn_create(parent);
-    lv_obj_set_user_data(ui_objs.settings_factory_btn, (void*)(uintptr_t)OBJ_SETTINGS_FACTORY_BTN);
-    lv_obj_add_event_cb(ui_objs.settings_factory_btn, ui_event_cb, LV_EVENT_ALL, NULL);
-    lv_obj_set_size(ui_objs.settings_factory_btn, 200, 40);
-    lv_obj_align(ui_objs.settings_factory_btn, LV_ALIGN_BOTTOM_LEFT, 20, -80);
-    lv_obj_set_style_bg_color(ui_objs.settings_factory_btn, lv_palette_main(LV_PALETTE_RED), 0);
-    
-    lv_obj_t* factory_label = lv_label_create(ui_objs.settings_factory_btn);
-    lv_label_set_text(factory_label, "FACTORY RESET");
-    lv_obj_center(factory_label);
-    lv_obj_set_style_text_color(factory_label, lv_color_white(), 0);
-    
-    lv_obj_t* warning_label = lv_label_create(parent);
-    lv_label_set_text(warning_label, "Warning: Erases all data!");
-    lv_obj_set_style_text_color(warning_label, lv_palette_main(LV_PALETTE_RED), 0);
-    lv_obj_set_style_text_font(warning_label, &lv_font_montserrat_12, 0);
-    lv_obj_align_to(warning_label, ui_objs.settings_factory_btn, LV_ALIGN_OUT_BOTTOM_MID, 0, 5);
-    
-    lv_obj_t* nav_label = lv_label_create(parent);
-    lv_label_set_text(nav_label, "Swipe left for start screen");
-    lv_obj_set_style_text_color(nav_label, lv_color_black(), 0);
-    lv_obj_align(nav_label, LV_ALIGN_BOTTOM_MID, 0, -20);
+    lv_obj_t* save_label = lv_label_create(save_btn);
+    lv_label_set_text(save_label, "Set Default");
+    lv_obj_center(save_label);
+
+    lv_obj_t* nav = lv_label_create(parent);
+    lv_label_set_text(nav, "<- History screen");
+    lv_obj_align(nav, LV_ALIGN_BOTTOM_MID, 0, -18);
 }
 
-// Create complete UI
+/**
+ * Loads saved defaults from flash memory
+ */
+static void load_saved_defaults() {
+    preferences.begin(PREF_NAMESPACE, true);
+    if (preferences.isKey(PREF_CITY) && preferences.isKey(PREF_PARAM)) {
+        selectedCityIndex = preferences.getInt(PREF_CITY, DEFAULT_CITY_INDEX);
+        int p = preferences.getInt(PREF_PARAM, DEFAULT_PARAMETER_INDEX);
+        if (p < 0 || p > 3) p = DEFAULT_PARAMETER_INDEX;
+        selectedParameter = PARAMETER_CODES[p];
+    } else {
+        selectedCityIndex = DEFAULT_CITY_INDEX;
+        selectedParameter = PARAMETER_CODES[DEFAULT_PARAMETER_INDEX];
+    }
+    preferences.end();
+    update_selected_city_name();
+}
+
+/**
+ * Connects to WiFi network
+ */
+static void connect_wifi() {
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    
+    uint32_t start = millis();
+    while (WiFi.status() != WL_CONNECTED && (millis() - start) < 15000) {
+        delay(250);
+    }
+}
+
+/**
+ * Creates the complete UI with all screens
+ */
 static void create_ui() {
     tileview = lv_tileview_create(lv_scr_act());
     lv_obj_set_size(tileview, lv_disp_get_hor_res(NULL), lv_disp_get_ver_res(NULL));
     lv_obj_set_scrollbar_mode(tileview, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_dir(tileview, LV_DIR_HOR);
-    
+
     start_tile = lv_tileview_add_tile(tileview, 0, 0, LV_DIR_RIGHT);
     forecast_tile = lv_tileview_add_tile(tileview, 1, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
     history_tile = lv_tileview_add_tile(tileview, 2, 0, LV_DIR_LEFT | LV_DIR_RIGHT);
     settings_tile = lv_tileview_add_tile(tileview, 3, 0, LV_DIR_LEFT);
-    
+
     create_start_screen(start_tile);
     create_forecast_screen(forecast_tile);
     create_history_screen(history_tile);
     create_settings_screen(settings_tile);
 }
 
+/**
+ * Arduino setup function - initializes everything
+ */
 void setup() {
     Serial.begin(115200);
-    delay(1000);
-    
-    esp_task_wdt_init(60, true);
-    esp_task_wdt_add(NULL);
-    
-    if (!init_spiffs()) {
-        Serial.println("Failed to initialize SPIFFS");
-    }
-    
-    if (!init_historical_data()) {
-        Serial.println("Failed to initialize historical data buffer");
-    }
-    
-    if (!amoled.begin()) {
-        while (true) {
-            delay(1000);
-        }
-    }
-    
-    beginLvglHelper(amoled);
-    
+    delay(500);
+
+    // Initialize forecast data
     for (int i = 0; i < 7; i++) {
         forecastData[i].date[0] = '\0';
+        forecastData[i].day_of_month = 0;
         forecastData[i].temperature = 0.0;
         forecastData[i].symbol_code = 1;
-        forecastData[i].symbolToText = "Sunny";
+        forecastData[i].condition = "Sunny";
     }
     
-    // NEW: Load settings BEFORE UI creation
-    if (load_settings_from_flash()) {
-        defaultsLoaded = true;
-        Serial.println("Loaded saved settings from flash");
+    // Initialize historical data
+    for (int i = 0; i < HISTORICAL_DATA_POINTS; i++) { 
+        historicalData[i] = NAN; 
+        historicalTime[i][0] = 0; 
+    }
+
+    load_saved_defaults();
+
+    if (!amoled.begin()) {
+        // Display initialization failed
     } else {
-        // Use defaults
-        selectedCityIndex = DEFAULT_CITY_INDEX;
-        selectedParameter = PARAMETER_CODES[DEFAULT_PARAMETER_INDEX];
-        strcpy(selectedCity, "Karlskrona");
-        Serial.println("Using default settings");
+        beginLvglHelper(amoled);
     }
-    
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    
-    int wifiTimeout = 0;
-    while (WiFi.status() != WL_CONNECTED && wifiTimeout < 30) {
-        delay(500);
-        wifiTimeout++;
-        esp_task_wdt_reset();
+
+    connect_wifi();
+
+    // Initialize time and date system
+    if (WiFi.status() == WL_CONNECTED) {
+        init_time();
+        generate_date_array();
+        
+        // Initialize forecast data with dates
+        for (int i = 0; i < 7; i++) {
+            strncpy(forecastData[i].date, date_array[i], sizeof(forecastData[i].date) - 1);
+            forecastData[i].date[sizeof(forecastData[i].date) - 1] = '\0';
+            forecastData[i].day_of_month = get_day_of_month(date_array[i]);
+        }
     }
-    
+
     create_ui();
-    
-    // Load cached data if available
-    bool loadedWeather = load_weather_from_flash();
-    bool loadedHistorical = load_historical_from_flash();
-    
-    if (loadedWeather || loadedHistorical) {
-        update_all_objects();
-    }
-    
-    // Fetch fresh data if connected
-    if (WiFi.status() == WL_CONNECTED && (!loadedWeather || !loadedHistorical)) {
-        if (!loadedWeather) {
-            fetch_weather_data();
-            delay(500);
-        }
-        if (!loadedHistorical) {
-            fetch_historical_data();
-        }
-    } else if (WiFi.status() == WL_CONNECTED) {
-        // Still refresh data even if cached exists
+    update_forecast_title();
+
+    if (WiFi.status() == WL_CONNECTED) {
         fetch_weather_data();
-        delay(500);
         fetch_historical_data();
     }
 }
 
+/**
+ * Arduino main loop - handles periodic updates
+ */
 void loop() {
     static unsigned long lastLvglUpdate = 0;
-    static unsigned long lastWifiCheck = 0;
     static unsigned long lastDataUpdate = 0;
+    static unsigned long lastDateCheck = 0;
     
     unsigned long now = millis();
     
-    esp_task_wdt_reset();
-    
-    if (now - lastLvglUpdate > 33) {
+    // Handle LVGL
+    if (now - lastLvglUpdate > 5) {
         lv_timer_handler();
         lastLvglUpdate = now;
     }
     
-    if (now - lastWifiCheck > 60000) {
-        ensure_wifi_connection();
-        if (ui_objs.start_wifi_label) {
-            lv_event_send(ui_objs.start_wifi_label, LV_EVENT_REFRESH, NULL);
-        }
-        lastWifiCheck = now;
+    // Check for date changes every minute
+    if (now - lastDateCheck > 60000) {
+        check_and_refresh_dates();
+        lastDateCheck = now;
     }
     
-    if (WiFi.status() == WL_CONNECTED && now - lastDataUpdate > 1800000) {
+    // Auto-refresh data every 30 minutes
+    if (WiFi.status() == WL_CONNECTED && now - lastDataUpdate > 1800000UL) {
         fetch_weather_data();
-        delay(500);
         fetch_historical_data();
         lastDataUpdate = now;
     }
     
-    delay(10);
+    delay(5);
 }
