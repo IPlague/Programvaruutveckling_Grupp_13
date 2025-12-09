@@ -28,6 +28,7 @@ static lv_obj_t* forecast_title_label;
 // Variables for historical data
 static lv_obj_t* history_slider;
 static lv_obj_t* history_chart;
+static lv_obj_t* y_unit_label;
 static lv_chart_series_t* temp_series;
 static const int HISTORICAL_DATA_POINTS = 720; // 30 days * 24 hours
 static float historicalData[HISTORICAL_DATA_POINTS];
@@ -48,7 +49,7 @@ static const int PARAMETER_CODES[] = {1, 6, 4, 9};
 static lv_obj_t* settings_tile;
 static char selectedCity[40] = "Karlskrona";
 static int selectedCityIndex = 0;  
-static int selectedParameter = 1;
+static int selectedParameter = 0;
 
 static lv_obj_t* city_dropdown;
 static lv_obj_t* param_dropdown;
@@ -538,6 +539,13 @@ static void update_forecast_title() {
     lv_label_set_text(forecast_title_label, buffer);
 }
 
+//Helper function for title on historical data screen
+static void update_historical_parameter() {
+    char buffer[10];
+    snprintf(buffer,sizeof(buffer), "7-Day Forecast - %s", selectedParameter);
+    lv_label_set_text(y_unit_label, buffer);
+}
+
 //Settings Screen//
 //City selector event
 static void city_dropdown_event_cb(lv_event_t* e) {
@@ -547,6 +555,7 @@ static void city_dropdown_event_cb(lv_event_t* e) {
     Serial.printf("Selected city: %s\n", selectedCity);
 
     update_selected_city_name();
+    update_history_chart();
     fetch_weather_data();
     update_forecast_display();
     update_forecast_title();
@@ -561,6 +570,7 @@ static void parameter_dropdown_event_cb(lv_event_t* e) {
     
     Serial.printf("Selected parameter: %d\n", selectedParameter);
 
+    update_history_chart();
     update_forecast_display();
     fetch_historical_data();
 }
