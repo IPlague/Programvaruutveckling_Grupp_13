@@ -13,14 +13,15 @@
 #include "esp_task_wdt.h"
 
 // Wi-Fi credentials
-static const char* WIFI_SSID     = "Tele2_03C5D6";
-static const char* WIFI_PASSWORD = "7mfkr5uv";
+static const char* WIFI_SSID     = "xxx";
+static const char* WIFI_PASSWORD = "xxx";
 
 LilyGo_Class amoled;
 
 // Flash storage files
 static const char* WEATHER_FILE = "/weather.json";
 static const char* HISTORICAL_FILE = "/historical.json";
+static const char* SETTINGS_FILE = "/settings.json";  // NEW: Settings file
 
 // Global UI variables
 static lv_obj_t* tileview;
@@ -53,6 +54,7 @@ enum ObjectID {
     OBJ_SETTINGS_CITY_DROPDOWN,
     OBJ_SETTINGS_PARAM_DROPDOWN,
     OBJ_SETTINGS_RESET_BTN,
+    OBJ_SETTINGS_SET_DEFAULT_BTN,  // NEW: Set as default button
     OBJ_SETTINGS_FACTORY_BTN,
     OBJ_COUNT
 };
@@ -81,6 +83,7 @@ struct UIObjects {
     lv_obj_t* settings_city_dropdown;
     lv_obj_t* settings_param_dropdown;
     lv_obj_t* settings_reset_btn;
+    lv_obj_t* settings_set_default_btn;  // NEW: Set as default button
     lv_obj_t* settings_factory_btn;
 };
 
@@ -97,7 +100,7 @@ struct HistoricalDataPoint {
 static const int HISTORICAL_DATA_POINTS = 500;
 static HistoricalDataPoint* historicalData = nullptr;
 static int currentDataPoints = 0;
-static int sliderOffset = 0;
+static int sliderOffset = 100;  // CHANGED: Start at 100 (latest data)
 static const int CHART_POINTS = 50;
 
 // Variables for default values for settings
@@ -110,6 +113,9 @@ static char selectedCity[40] = "Karlskrona";
 static int selectedCityIndex = 0;  
 static int selectedParameter = 1;
 static bool isSwitchingCity = false;
+
+// NEW: Flag to track if defaults have been loaded
+static bool defaultsLoaded = false;
 
 // Weather data variables
 struct WeatherDay {
@@ -172,6 +178,11 @@ static void update_all_objects();
 // SPIFFS functions
 static bool init_spiffs();
 static bool init_historical_data();
+
+// NEW: Settings management functions
+static void save_settings_to_flash();
+static bool load_settings_from_flash();
+
 static void save_weather_to_flash();
 static bool load_weather_from_flash();
 static void save_historical_to_flash();
@@ -298,6 +309,64 @@ static bool init_historical_data() {
     
     memset(historicalData, 0, HISTORICAL_DATA_POINTS * sizeof(HistoricalDataPoint));
     currentDataPoints = 0;
+    return true;
+}
+
+// NEW: Save settings to flash
+static void save_settings_to_flash() {
+    File file = SPIFFS.open(SETTINGS_FILE, "w");
+    if (!file) {
+        Serial.println("Failed to open settings file for writing");
+        return;
+    }
+    
+    JsonDocument doc;
+    doc["city"] = selectedCity;
+    doc["cityIndex"] = selectedCityIndex;
+    doc["parameter"] = selectedParameter;
+    
+    if (serializeJson(doc, file) == 0) {
+        Serial.println("Failed to write settings to file");
+    } else {
+        Serial.println("Settings saved successfully");
+    }
+    
+    file.close();
+}
+
+// NEW: Load settings from flash
+static bool load_settings_from_flash() {
+    File file = SPIFFS.open(SETTINGS_FILE, "r");
+    if (!file || file.size() == 0) {
+        Serial.println("No saved settings found, using defaults");
+        return false;
+    }
+    
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, file);
+    file.close();
+    
+    if (error) {
+        Serial.print("Failed to parse settings: ");
+        Serial.println(error.c_str());
+        return false;
+    }
+    
+    const char* savedCity = doc["city"];
+    int savedCityIndex = doc["cityIndex"];
+    int savedParameter = doc["parameter"];
+    
+    if (savedCity) {
+        strncpy(selectedCity, savedCity, sizeof(selectedCity) - 1);
+        selectedCity[sizeof(selectedCity) - 1] = '\0';
+    }
+    
+    selectedCityIndex = savedCityIndex;
+    selectedParameter = savedParameter;
+    
+    Serial.printf("Loaded settings: City=%s, CityIndex=%d, Parameter=%d\n", 
+                  selectedCity, selectedCityIndex, selectedParameter);
+    
     return true;
 }
 
@@ -437,7 +506,7 @@ static void ensure_wifi_connection() {
     }
 }
 
-// Fetch weather data
+// Fetch weather data - FIXED: Direct numeric symbol code parsing
 static void fetch_weather_data() {
     ensure_wifi_connection();
     
@@ -499,34 +568,64 @@ static void fetch_weather_data() {
         const char* timeStr = entry["time"];
         String currentDate = String(timeStr).substring(0, 10);
         
-        if (currentDate != lastDate) {
-            lastDate = currentDate;
-            
-            strncpy(forecastData[daysFound].date, timeStr, 10);
-            forecastData[daysFound].date[10] = '\0';
-            
-            JsonArray parameters = entry["parameters"].as<JsonArray>();
-            for (JsonVariant param : parameters) {
-                String paramName = param["name"].as<String>();
-                if (paramName == "air_temperature") {
-                    forecastData[daysFound].temperature = param["values"][0];
-                } else if (paramName == "symbol_code") {
-                    String symbolStr = param["values"][0];
-                    if (symbolStr.startsWith("clearsky")) forecastData[daysFound].symbol_code = 1;
-                    else if (symbolStr.startsWith("fair")) forecastData[daysFound].symbol_code = 2;
-                    else if (symbolStr.startsWith("partlycloudy")) forecastData[daysFound].symbol_code = 3;
-                    else if (symbolStr.startsWith("cloudy")) forecastData[daysFound].symbol_code = 5;
-                    else if (symbolStr.startsWith("rainshowers")) forecastData[daysFound].symbol_code = 8;
-                    else if (symbolStr.startsWith("rain")) forecastData[daysFound].symbol_code = 9;
-                    else if (symbolStr.startsWith("thunder")) forecastData[daysFound].symbol_code = 11;
-                    else if (symbolStr.startsWith("snowandrain")) forecastData[daysFound].symbol_code = 12;
-                    else if (symbolStr.startsWith("snow")) forecastData[daysFound].symbol_code = 15;
-                    else forecastData[daysFound].symbol_code = 1;
+        // Try to get data around 12:00
+        String timePart = String(timeStr).substring(11, 16); // Get HH:MM
+        if (timePart >= "11:00" && timePart <= "13:00") {
+            if (currentDate != lastDate) {
+                lastDate = currentDate;
+                
+                strncpy(forecastData[daysFound].date, timeStr, 10);
+                forecastData[daysFound].date[10] = '\0';
+                
+                JsonArray parameters = entry["parameters"].as<JsonArray>();
+                for (JsonVariant param : parameters) {
+                    String paramName = param["name"].as<String>();
+                    if (paramName == "air_temperature") {
+                        forecastData[daysFound].temperature = param["values"][0];
+                    } else if (paramName == "symbol_code") {
+                        // FIXED: Direct numeric value - no string parsing needed
+                        forecastData[daysFound].symbol_code = param["values"][0].as<int>();
+                    }
                 }
+                
+                forecastData[daysFound].symbolToText = symbolToText(forecastData[daysFound].symbol_code);
+                daysFound++;
             }
+        }
+    }
+    
+    // Fallback: if we didn't find 12:00 data, use first entry of each day
+    if (daysFound < 7) {
+        daysFound = 0;
+        lastDate = "";
+        
+        for (JsonVariant entryVariant : timeSeries) {
+            if (daysFound >= 7) break;
             
-            forecastData[daysFound].symbolToText = symbolToText(forecastData[daysFound].symbol_code);
-            daysFound++;
+            JsonObject entry = entryVariant.as<JsonObject>();
+            const char* timeStr = entry["time"];
+            String currentDate = String(timeStr).substring(0, 10);
+            
+            if (currentDate != lastDate) {
+                lastDate = currentDate;
+                
+                strncpy(forecastData[daysFound].date, timeStr, 10);
+                forecastData[daysFound].date[10] = '\0';
+                
+                JsonArray parameters = entry["parameters"].as<JsonArray>();
+                for (JsonVariant param : parameters) {
+                    String paramName = param["name"].as<String>();
+                    if (paramName == "air_temperature") {
+                        forecastData[daysFound].temperature = param["values"][0];
+                    } else if (paramName == "symbol_code") {
+                        // FIXED: Direct numeric value - no string parsing needed
+                        forecastData[daysFound].symbol_code = param["values"][0].as<int>();
+                    }
+                }
+                
+                forecastData[daysFound].symbolToText = symbolToText(forecastData[daysFound].symbol_code);
+                daysFound++;
+            }
         }
     }
     
@@ -553,7 +652,7 @@ static void fetch_historical_data() {
     
     int stationId = (int)WeatherStation[cityName][0];
     
-    String historicalURL = "https://opendata-download-metobs.smhi.se/api/version/1.0/parameter/";
+    String historicalURL = "https://opendata-download-metobs.smhi.se/api/version/latest/parameter/";
     historicalURL += String(selectedParameter);
     historicalURL += "/station/";
     historicalURL += String(stationId);
@@ -682,6 +781,7 @@ static void ui_event_cb(lv_event_t* e) {
             case OBJ_SETTINGS_CITY_DROPDOWN: ui_objs.settings_city_dropdown = nullptr; break;
             case OBJ_SETTINGS_PARAM_DROPDOWN: ui_objs.settings_param_dropdown = nullptr; break;
             case OBJ_SETTINGS_RESET_BTN: ui_objs.settings_reset_btn = nullptr; break;
+            case OBJ_SETTINGS_SET_DEFAULT_BTN: ui_objs.settings_set_default_btn = nullptr; break;
             case OBJ_SETTINGS_FACTORY_BTN: ui_objs.settings_factory_btn = nullptr; break;
             default: break;
         }
@@ -768,6 +868,7 @@ static void ui_event_cb(lv_event_t* e) {
                     }
                 } else {
                     int maxOffset = currentDataPoints - CHART_POINTS;
+                    // FIXED: sliderOffset directly used (0 = oldest, 100 = latest)
                     int offset = (sliderOffset * maxOffset) / 100;
                     
                     for (int i = 0; i < CHART_POINTS; i++) {
@@ -905,11 +1006,10 @@ static void ui_event_cb(lv_event_t* e) {
             }
             case OBJ_HISTORY_SLIDER: {
                 int32_t value = lv_slider_get_value(obj);
-                if (currentDataPoints > CHART_POINTS) {
-                    sliderOffset = 100 - value;
-                    if (ui_objs.history_chart) {
-                        lv_event_send(ui_objs.history_chart, LV_EVENT_REFRESH, NULL);
-                    }
+                // FIXED: Direct mapping (0 = oldest, 100 = latest)
+                sliderOffset = value;
+                if (ui_objs.history_chart) {
+                    lv_event_send(ui_objs.history_chart, LV_EVENT_REFRESH, NULL);
                 }
                 break;
             }
@@ -940,36 +1040,66 @@ static void ui_event_cb(lv_event_t* e) {
                 fetch_historical_data();
                 break;
             }
+            case OBJ_SETTINGS_SET_DEFAULT_BTN: {
+                // NEW: Save current settings as defaults
+                save_settings_to_flash();
+                
+                // Show confirmation message
+                lv_obj_t* msgbox = lv_msgbox_create(NULL, "Settings Saved", 
+                    "Current settings saved as defaults!\nThey will be used on next startup.",
+                    NULL, true);
+                lv_obj_center(msgbox);
+                
+                // Auto-close after 3 seconds
+                lv_timer_t* timer = lv_timer_create([](lv_timer_t* timer) {
+                lv_obj_t* msgbox = (lv_obj_t*)timer->user_data;
+                lv_msgbox_close(msgbox);
+                lv_timer_del(timer);
+                }, 3000, msgbox);
+                
+                break;
+            }
             case OBJ_SETTINGS_FACTORY_BTN: {
-                if (SPIFFS.begin()) {
-                    SPIFFS.format();
-                }
-                
-                selectedCityIndex = DEFAULT_CITY_INDEX;
-                selectedParameter = PARAMETER_CODES[DEFAULT_PARAMETER_INDEX];
-                strcpy(selectedCity, "Karlskrona");
-                
-                if (historicalData) {
-                    free(historicalData);
-                    historicalData = nullptr;
-                }
-                currentDataPoints = 0;
-                
-                for (int i = 0; i < 7; i++) {
-                    forecastData[i].date[0] = '\0';
-                    forecastData[i].temperature = 0.0;
-                    forecastData[i].symbol_code = 1;
-                    forecastData[i].symbolToText = "Sunny";
-                }
-                
-                if (ui_objs.settings_city_dropdown) {
-                    lv_dropdown_set_selected(ui_objs.settings_city_dropdown, DEFAULT_CITY_INDEX);
-                }
-                if (ui_objs.settings_param_dropdown) {
-                    lv_dropdown_set_selected(ui_objs.settings_param_dropdown, DEFAULT_PARAMETER_INDEX);
-                }
-                
-                update_all_objects();
+                lv_obj_t* mbox = lv_msgbox_create(NULL, "Confirm Factory Reset", 
+                    "Are you sure? This will erase ALL data.", 
+                    (const char*[]){"Cancel", "Reset", ""}, true);
+                lv_obj_add_event_cb(mbox, [](lv_event_t* e) {
+                    lv_obj_t* msgbox = lv_event_get_current_target(e);
+                    const char* txt = lv_msgbox_get_active_btn_text(msgbox);
+                    if (txt && strcmp(txt, "Reset") == 0) {
+                        if (SPIFFS.begin()) {
+                            SPIFFS.format();
+                        }
+                        
+                        selectedCityIndex = DEFAULT_CITY_INDEX;
+                        selectedParameter = PARAMETER_CODES[DEFAULT_PARAMETER_INDEX];
+                        strcpy(selectedCity, "Karlskrona");
+                        
+                        if (historicalData) {
+                            free(historicalData);
+                            historicalData = nullptr;
+                        }
+                        currentDataPoints = 0;
+                        
+                        for (int i = 0; i < 7; i++) {
+                            forecastData[i].date[0] = '\0';
+                            forecastData[i].temperature = 0.0;
+                            forecastData[i].symbol_code = 1;
+                            forecastData[i].symbolToText = "Sunny";
+                        }
+                        
+                        if (ui_objs.settings_city_dropdown) {
+                            lv_dropdown_set_selected(ui_objs.settings_city_dropdown, DEFAULT_CITY_INDEX);
+                        }
+                        if (ui_objs.settings_param_dropdown) {
+                            lv_dropdown_set_selected(ui_objs.settings_param_dropdown, DEFAULT_PARAMETER_INDEX);
+                        }
+                        
+                        update_all_objects();
+                    }
+                    lv_msgbox_close(msgbox);
+                }, LV_EVENT_VALUE_CHANGED, NULL);
+                lv_obj_center(mbox);
                 break;
             }
             default:
@@ -1158,10 +1288,10 @@ static void create_history_screen(lv_obj_t* parent) {
     lv_obj_set_size(ui_objs.history_slider, 380, 20);
     lv_obj_align(ui_objs.history_slider, LV_ALIGN_BOTTOM_MID, 0, -50);
     lv_slider_set_range(ui_objs.history_slider, 0, 100);
-    lv_slider_set_value(ui_objs.history_slider, 100, LV_ANIM_OFF);
+    lv_slider_set_value(ui_objs.history_slider, 100, LV_ANIM_OFF); // Start at 100 (latest)
     
     lv_obj_t* slider_label = lv_label_create(parent);
-    lv_label_set_text(slider_label, "Scroll through data");
+    lv_label_set_text(slider_label, "Scroll through data (0=oldest, 100=latest)");
     lv_obj_set_style_text_color(slider_label, lv_color_black(), 0);
     lv_obj_set_style_text_font(slider_label, &lv_font_montserrat_14, 0);
     lv_obj_align_to(slider_label, ui_objs.history_slider, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
@@ -1207,7 +1337,6 @@ static void create_settings_screen(lv_obj_t* parent) {
     );
     lv_obj_set_width(ui_objs.settings_city_dropdown, 240);
     lv_obj_align(ui_objs.settings_city_dropdown, LV_ALIGN_TOP_LEFT, 20, 90);
-    lv_dropdown_set_selected(ui_objs.settings_city_dropdown, DEFAULT_CITY_INDEX);
     
     lv_obj_t* param_label = lv_label_create(parent);
     lv_label_set_text(param_label, "Select Weather Parameter:");
@@ -1225,17 +1354,48 @@ static void create_settings_screen(lv_obj_t* parent) {
     );
     lv_obj_set_width(ui_objs.settings_param_dropdown, 240);
     lv_obj_align(ui_objs.settings_param_dropdown, LV_ALIGN_TOP_LEFT, 20, 180);
-    lv_dropdown_set_selected(ui_objs.settings_param_dropdown, DEFAULT_PARAMETER_INDEX);
+    
+    // NEW: Set dropdown selections based on loaded settings
+    if (!defaultsLoaded) {
+        // Load settings first if not already loaded
+        load_settings_from_flash();
+        defaultsLoaded = true;
+    }
+    
+    lv_dropdown_set_selected(ui_objs.settings_city_dropdown, selectedCityIndex);
+    lv_dropdown_set_selected(ui_objs.settings_param_dropdown, 
+        (selectedParameter == 1) ? 0 : 
+        (selectedParameter == 6) ? 1 : 
+        (selectedParameter == 4) ? 2 : 3);
     
     ui_objs.settings_reset_btn = lv_btn_create(parent);
     lv_obj_set_user_data(ui_objs.settings_reset_btn, (void*)(uintptr_t)OBJ_SETTINGS_RESET_BTN);
     lv_obj_add_event_cb(ui_objs.settings_reset_btn, ui_event_cb, LV_EVENT_ALL, NULL);
     lv_obj_set_size(ui_objs.settings_reset_btn, 200, 40);
-    lv_obj_align(ui_objs.settings_reset_btn, LV_ALIGN_BOTTOM_LEFT, 20, -130);
+    lv_obj_align(ui_objs.settings_reset_btn, LV_ALIGN_BOTTOM_LEFT, 20, -180);
     
     lv_obj_t* reset_label = lv_label_create(ui_objs.settings_reset_btn);
     lv_label_set_text(reset_label, "Reset to Default");
     lv_obj_center(reset_label);
+    
+    // NEW: Set as Default button
+    ui_objs.settings_set_default_btn = lv_btn_create(parent);
+    lv_obj_set_user_data(ui_objs.settings_set_default_btn, (void*)(uintptr_t)OBJ_SETTINGS_SET_DEFAULT_BTN);
+    lv_obj_add_event_cb(ui_objs.settings_set_default_btn, ui_event_cb, LV_EVENT_ALL, NULL);
+    lv_obj_set_size(ui_objs.settings_set_default_btn, 200, 40);
+    lv_obj_align(ui_objs.settings_set_default_btn, LV_ALIGN_BOTTOM_LEFT, 20, -130);
+    lv_obj_set_style_bg_color(ui_objs.settings_set_default_btn, lv_palette_main(LV_PALETTE_BLUE), 0);
+    
+    lv_obj_t* set_default_label = lv_label_create(ui_objs.settings_set_default_btn);
+    lv_label_set_text(set_default_label, "Set as Default");
+    lv_obj_center(set_default_label);
+    lv_obj_set_style_text_color(set_default_label, lv_color_white(), 0);
+    
+    lv_obj_t* default_info_label = lv_label_create(parent);
+    lv_label_set_text(default_info_label, "Saves current selection for next startup");
+    lv_obj_set_style_text_color(default_info_label, lv_palette_main(LV_PALETTE_BLUE), 0);
+    lv_obj_set_style_text_font(default_info_label, &lv_font_montserrat_12, 0);
+    lv_obj_align_to(default_info_label, ui_objs.settings_set_default_btn, LV_ALIGN_OUT_BOTTOM_MID, 0, 5);
     
     ui_objs.settings_factory_btn = lv_btn_create(parent);
     lv_obj_set_user_data(ui_objs.settings_factory_btn, (void*)(uintptr_t)OBJ_SETTINGS_FACTORY_BTN);
@@ -1287,9 +1447,11 @@ void setup() {
     esp_task_wdt_add(NULL);
     
     if (!init_spiffs()) {
+        Serial.println("Failed to initialize SPIFFS");
     }
     
     if (!init_historical_data()) {
+        Serial.println("Failed to initialize historical data buffer");
     }
     
     if (!amoled.begin()) {
@@ -1307,6 +1469,18 @@ void setup() {
         forecastData[i].symbolToText = "Sunny";
     }
     
+    // NEW: Load settings BEFORE UI creation
+    if (load_settings_from_flash()) {
+        defaultsLoaded = true;
+        Serial.println("Loaded saved settings from flash");
+    } else {
+        // Use defaults
+        selectedCityIndex = DEFAULT_CITY_INDEX;
+        selectedParameter = PARAMETER_CODES[DEFAULT_PARAMETER_INDEX];
+        strcpy(selectedCity, "Karlskrona");
+        Serial.println("Using default settings");
+    }
+    
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     
@@ -1319,6 +1493,7 @@ void setup() {
     
     create_ui();
     
+    // Load cached data if available
     bool loadedWeather = load_weather_from_flash();
     bool loadedHistorical = load_historical_from_flash();
     
@@ -1326,10 +1501,20 @@ void setup() {
         update_all_objects();
     }
     
+    // Fetch fresh data if connected
     if (WiFi.status() == WL_CONNECTED && (!loadedWeather || !loadedHistorical)) {
-        if (!loadedWeather) fetch_weather_data();
+        if (!loadedWeather) {
+            fetch_weather_data();
+            delay(500);
+        }
+        if (!loadedHistorical) {
+            fetch_historical_data();
+        }
+    } else if (WiFi.status() == WL_CONNECTED) {
+        // Still refresh data even if cached exists
+        fetch_weather_data();
         delay(500);
-        if (!loadedHistorical) fetch_historical_data();
+        fetch_historical_data();
     }
 }
 
@@ -1363,8 +1548,4 @@ void loop() {
     }
     
     delay(10);
-
-    
-    update_all_objects();
-    
 }
