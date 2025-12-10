@@ -2,14 +2,6 @@
 Grupp_13
 https://docs.google.com/document/d/1glbq1NhrB0KMsgJXjn6R_UYCc8ks2l0L2Da2Vk9Eq4E/edit?usp=sharing 
 
-hahahhahahha
-123123123
-
-
-https://lvgl.io/tools/imageconverter To convert the PNGs into c code for LVGL
-
-
-
 #PA1484 – Software Development: Weather Station Project
 
 ## Introduction
@@ -26,6 +18,9 @@ The application solves the problem of accessing localized weather information in
 - SMHI Open Data APIs for weather information
 - ArduinoJson for data parsing
 - NTP time synchronization
+- [LVGL image converter](https://lvgl.io/tools/imageconverter)
+- DeepSeek for code generation 
+
 
 **Main functionality:**
 - 7-day weather forecast with icons and temperatures
@@ -98,6 +93,8 @@ Before setting up the project, ensure you have:
 
 3. **Upload to ESP32:**
    - Connect the ESP32 via USB
+   - While connecting, hold down BOOT and RST
+   - Let go of Reset, then immediately afterwards BOOT
    - Click the right arrow (→) icon in the PlatformIO toolbar
    - Or use the shortcut `Ctrl+Alt+U` (Windows/Linux) or `Cmd+Alt+U` (Mac)
 
@@ -217,4 +214,4 @@ The application uses a swipe-based navigation system with four screens:
 - Object-oriented UI component management
 - Event-driven architecture for user interactions
 
-This project represents a complete, production-ready weather station application with robust error handling, efficient data management, and an intuitive user interface.
+
