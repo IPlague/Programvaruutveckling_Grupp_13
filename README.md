@@ -221,4 +221,17 @@ The application uses a swipe-based navigation system with four screens:
 - Object-oriented UI component management
 - Event-driven architecture for user interactions
 
+### Observations & Known Issues
+#### **Issue**: 
+-Application crashes when rapidly changing the weather parameter and immediately swiping to the Historical Data screen.
+
+#### **Root Cause**: 
+-The crash occurs due to a race condition between the data-fetching process (triggered by the parameter change) and the navigation attempt. The historical screen attempts to load data that may still be in an incomplete or transitional state.
+
+#### **Workaround**: 
+-After updating the weather parameter, allow approximately 10 seconds for the data request to fully complete and the application state to stabilize before navigating to the Historical Data screen.
+
+#### **Permanent Fix Status**: 
+-Under investigation. A code update to better manage this state transition and prevent the crash is planned for a future release.
+
 
